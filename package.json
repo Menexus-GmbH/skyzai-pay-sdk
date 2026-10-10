@@ -1,6 +1,6 @@
 {
   "name": "aureus-pay",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Accept crypto payments (USDC/USDT) with Aureus on Hedera and EVM chains",
   "main": "src/index.js",
   "type": "module",
@@ -20,14 +20,25 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aureus/aureus-pay-sdk.git"
+    "url": "https://github.com/Menexus-GmbH/aureus-pay-sdk.git"
   },
-  "homepage": "https://aureus.money",
+  "homepage": "https://github.com/Menexus-GmbH/aureus-pay-sdk#readme",
   "dependencies": {
-    "axios": "^1.6.0",
+    "axios": "^1.20.0",
     "events": "^3.3.0"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
+  },
+  "bugs": {
+    "url": "https://github.com/Menexus-GmbH/aureus-pay-sdk/issues"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
   }
 }

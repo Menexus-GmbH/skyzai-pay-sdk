@@ -1,438 +1,191 @@
-# Aureus Pay SDK 💳
+# Aureus Pay SDK
 
-**Accept cryptocurrency payments effortlessly**  
-Enable USDC/USDT payments on Hedera and EVM chains with just a few lines of code.
+Create and monitor merchant payment requests with the Aureus or Skyzai backend.
+Keep merchant credentials on your server.
+The SDK reports backend status; it does not independently verify blockchain settlement.
 
----
+## Install and import
 
-## 📦 Installation
-
-```bash
+```sh
 npm install aureus-pay
 ```
 
----
+Node.js 18 or newer is required.
+This package is ESM.
 
-## 🚀 Quick Start (5 minutes)
+```js
+import AureusPay, { Payment } from 'aureus-pay';
+```
 
-### 1. Get Your API Key
-1. Download the [Aureus Wallet App](https://aureus.com/download)
-2. Go to **Settings** → **Developer** → **Generate API Key**
-3. Copy your API key
+From CommonJS, use dynamic import inside an async function:
 
-### 2. Create Your First Payment
+```js
+const { default: AureusPay } = await import('aureus-pay');
+```
 
-```javascript
-const AureusPay = require('aureus-pay');
+## Configure authentication on your server
 
-// Initialize with your API key
-const aureus = new AureusPay({
-  apiKey: 'your-api-key-here',
-  environment: 'production' // Use 'testnet' for testing
+Aureus is the default backend and requires a merchant API-key JWT:
+
+```js
+const aureus = new AureusPay({ apiKey: process.env.AUREUS_API_KEY });
+```
+
+Skyzai requires the merchant's Firebase ID token, not an Aureus API key or a Firebase custom token:
+
+```js
+const skyzai = new AureusPay({
+  backend: 'skyzai',
+  getIdToken: async () => merchantSession.getIdToken(true)
 });
+```
 
-// Create a payment request
+`merchantSession` represents your server's authenticated merchant-session integration.
+Supply a callback that obtains a fresh ID token when called again.
+The callback runs for every request, and once more on a 401 before a single retry.
+A Firebase Admin SDK custom token must first be exchanged for an ID token; it is not accepted directly.
+Do not use a buyer's token for merchant requests.
+
+| Configuration | Behavior |
+|---|---|
+| `backend` | `'aureus'` (default) or `'skyzai'` |
+| `apiKey` | Required only for Aureus; cannot be combined with `getIdToken` |
+| `getIdToken` | Required only for Skyzai; async callback returning a non-empty token |
+| `baseURL` | Optional HTTPS endpoint configured by the merchant server operator |
+
+Defaults are `https://us-central1-aureus-money.cloudfunctions.net` and `https://us-central1-skyzai-16e1b.cloudfunctions.net` respectively.
+Never derive `baseURL` from buyer input, metadata, a feed or a third party.
+Credentials are intentionally sent to the configured endpoint, so use only an endpoint you control and trust for that backend.
+Requests use HTTPS (plain HTTP is allowed only for `localhost`, for the Firebase emulator), do not follow redirects or proxies, and responses are capped at 1 MiB.
+Local fake-server tests replace the HTTP adapter; localhost is not a production endpoint.
+
+There is no SDK `environment` or testnet switch.
+Network/token availability and payment expiry are controlled by the selected backend.
+This SDK does not promise general EVM support or implement hosted checkout, webhooks, refunds or chain verification.
+
+## Create, retrieve and cancel
+
+```js
 const payment = await aureus.payments.create({
-  amount: '10.00',        // Amount in USD
-  currency: 'USDC',       // USDC or USDT
-  orderId: 'ORDER_123'    // Your order reference
-});
-
-// Show QR code to customer
-console.log('Payment QR Code:', payment.qrCode);
-console.log('Deep Link:', payment.deepLink);
-
-// Listen for payment confirmation
-payment.on('confirmed', (data) => {
-  console.log('✅ Payment received!');
-  console.log('Transaction:', data.txHash);
-  // ✨ Fulfill order, send receipt, etc.
-});
-
-// Start monitoring for payment
-payment.startListening();
-```
-
-### 3. Display Payment to Customer
-
-**Option A: QR Code** (Recommended)
-```javascript
-// Show QR code image
-<img src={payment.qrCode} alt="Scan to pay" />
-```
-
-**Option B: Deep Link** (Mobile)
-```javascript
-// Redirect mobile users
-window.location.href = payment.deepLink;
-// Opens Aureus app directly
-```
-
----
-
-## 📚 Complete API Reference
-
-### Initialize SDK
-
-```javascript
-const aureus = new AureusPay({
-  apiKey: 'your-api-key',        // Required: Get from Aureus app
-  environment: 'production'       // 'production' or 'testnet'
-});
-```
-
-**Parameters:**
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `apiKey` | string | ✅ Yes | Your API key from Aureus app |
-| `environment` | string | ❌ No | `'production'` (default) or `'testnet'` |
-
----
-
-### Create Payment
-
-```javascript
-const payment = await aureus.payments.create({
-  amount: '100.00',
+  amount: '10.00',
   currency: 'USDC',
   orderId: 'ORDER_123',
-  metadata: {
-    customerEmail: 'customer@example.com',
-    productName: 'Premium Subscription'
+  metadata: { productId: 'product-123' }
+});
+
+const current = await aureus.payments.get(payment.id);
+const cancelled = await aureus.payments.cancel(payment.id);
+await current.refresh();
+```
+
+`amount` must be a positive decimal and `currency` must be `USDC`, `USDT` or `USD`.
+Backend configuration decides which currencies can actually be paid.
+Compute price, quantity and merchant identity on your server using trusted order records.
+`metadata` must be an object.
+`orderId` is copied to `metadata.orderId`, overriding a value there if both are supplied.
+It is a reconciliation reference, not server-enforced order binding or an idempotency key.
+Persist payment/order linkage and enforce fulfillment once in your own database.
+Cancellation is subject to backend rules and can fail; do not assume a cancelled request reverses a transfer.
+
+Create responses missing identity, metadata or creation/update timestamps are refreshed once via `getPayment` before returning.
+If that refresh fails, create rejects even though the backend may already have created the payment.
+Inspect the error's cause and reconcile the order before retrying; creation is not idempotent.
+
+## Payment data and monitoring
+
+`Payment` exposes `id`/`paymentId`, `uId`/`userId`, `amount`, `currency`, `status`, `metadata`, `orderId`, `destinations`, `txHash`, `userEmail`, `userName`, `qrCode`, `qrUri` and `deepLink`.
+`createdAt`, `updatedAt`, `expiresAt` and `confirmedAt` are `Date` objects when supplied, otherwise `null`.
+Both backend identity spellings are normalized.
+
+```js
+payment.on('confirmed', data => {
+  // Reconcile backend evidence and fulfill your stored order idempotently.
+  console.log('Backend reports paid:', data.paymentId, data.txHash);
+});
+payment.on('expired', () => console.log('Payment expired'));
+payment.on('cancelled', () => console.log('Payment cancelled'));
+payment.on('failed', data => console.log('Payment failed:', data.status));
+payment.on('error', error => console.error(error.message));
+payment.startListening();
+// On shutdown or when monitoring is no longer needed:
+// payment.stopListening();
+```
+
+Both backend statuses `completed` and `confirmed` mean paid to the SDK.
+`confirmed` and the new `paid` alias each emit once per Payment instance with backend data.
+Subscribe to one of these for fulfillment to avoid running your handler twice.
+`status` and `status_change` retain the backend's raw status.
+Pending and processing payments continue polling; completed, confirmed, expired, cancelled and failed stop polling.
+An already-terminal payment emits its terminal event synchronously when listening starts, so register handlers first.
+Repeated starts do not duplicate terminal events.
+
+Polling waits 3 seconds before the first request and 3 seconds after each completed request, so requests never overlap.
+The legacy signature `startListening(apiClient, intervalMs)` remains supported; use `startListening(undefined, 1000)` to change only the interval.
+A polling error stops listening and emits `error`; always register an error handler before starting, then explicitly restart after resolving the problem.
+`refresh()` uses the bound client, with `refresh(apiClient)` retained for compatibility.
+`getStatus()`, `getQRCode()`, `getDeepLink()` and `isExpired()` remain available.
+The local clock expiry check does not write or infer a backend terminal status.
+
+## Server creates, browser renders
+
+Your authenticated server route must load an order belonging to the buyer and derive the price from its stored product data.
+This Express-style example assumes your existing `requireBuyer`, `orders` and `aureus` integration:
+
+```js
+app.post('/api/orders/:orderId/payment', requireBuyer, async (req, res, next) => {
+  try {
+    const order = await orders.getForBuyer(req.params.orderId, req.user.id);
+    if (!order || order.status !== 'unpaid') return res.sendStatus(409);
+    const payment = await aureus.payments.create({
+      amount: order.total,
+      currency: order.currency,
+      orderId: order.id
+    });
+    await orders.attachPayment(order.id, payment.id);
+    res.json({ paymentId: payment.id, qrUri: payment.qrUri, deepLink: payment.deepLink });
+  } catch (error) {
+    next(error);
   }
 });
 ```
 
-**Parameters:**
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `amount` | string | ✅ Yes | Payment amount (e.g., `'10.00'`) |
-| `currency` | string | ✅ Yes | `'USDC'` or `'USDT'` |
-| `orderId` | string | ❌ No | Your internal order reference |
-| `metadata` | object | ❌ No | Custom data (stored with payment) |
+Add your application's CSRF protection and an atomic order reservation/idempotency guard before allowing concurrent creates.
+Run server monitoring or reconciliation jobs against the stored payment ID and authorized order.
+A browser must query your own authorized order-status route, rather than receiving merchant credentials or calling merchant payment APIs directly.
+Do not send merchant profiles or arbitrary metadata to buyers.
 
-**Returns:** Payment object (see below)
-
----
-
-### Listen for Events
-
-```javascript
-// Monitor payment status changes
-payment.on('status_change', (status) => {
-  console.log('Status updated:', status);
-  // 'pending' → 'processing' → 'confirmed'
-});
-
-// Payment confirmed (funds received)
-payment.on('confirmed', (data) => {
-  console.log('✅ Payment confirmed!');
-  console.log('Transaction hash:', data.txHash);
-  console.log('Confirmed at:', data.confirmedAt);
-  // Fulfill order here
-});
-
-// Payment expired (15 min timeout)
-payment.on('expired', () => {
-  console.log('⏱️ Payment expired');
-  // Notify customer to retry
-});
-
-// Payment cancelled by customer
-payment.on('cancelled', () => {
-  console.log('❌ Payment cancelled');
-});
-
-// Payment failed
-payment.on('failed', (error) => {
-  console.log('💥 Payment failed:', error);
-});
-
-// Start listening (required!)
-payment.startListening();
-```
-
-**Event Timeline:**
-```
-Create Payment
-     ↓
-'pending' → Customer scans QR
-     ↓
-'processing' → Transaction submitted
-     ↓
-'confirmed' → Payment received ✅
-```
-
----
-
-### Get Payment Status
-
-```javascript
-// Retrieve existing payment
-const payment = await aureus.payments.get('payment_xyz123');
-
-console.log(payment.status);     // Current status
-console.log(payment.amount);     // Payment amount
-console.log(payment.confirmedAt); // When confirmed (if confirmed)
-```
-
----
-
-### Cancel Payment
-
-```javascript
-// Cancel pending payment
-await aureus.payments.cancel('payment_xyz123');
-```
-
-⚠️ **Note:** Can only cancel payments with status `'pending'`
-
----
-
-## 🎯 Payment Object
-
-Every payment has these properties:
-
-```javascript
-{
-  // Identifiers
-  id: 'payment_xyz123',           // Unique payment ID
-  orderId: 'ORDER_123',           // Your order reference
-  
-  // Amount & Currency
-  amount: '10.00',                // Payment amount
-  currency: 'USDC',               // USDC or USDT
-  
-  // Status
-  status: 'confirmed',            // See statuses below
-  
-  // Display to Customer
-  qrCode: 'data:image/png;base64,...',  // QR code image (Base64)
-  deepLink: 'aureus://pay?id=xyz123',   // Mobile deep link
-  
-  // Timing
-  createdAt: Date,                // When created
-  expiresAt: Date,                // Expires 15 min after creation
-  confirmedAt: Date,              // When confirmed (if confirmed)
-  
-  // Blockchain Details (after confirmation)
-  txHash: '0xabc...',             // Transaction hash
-  network: 'hedera',              // 'hedera', 'ethereum', etc.
-  
-  // Custom Data
-  metadata: { ... }               // Your custom data
-}
-```
-
-### Payment Statuses
-
-| Status | Description |
-|--------|-------------|
-| `pending` | Waiting for customer to pay |
-| `processing` | Transaction submitted to blockchain |
-| `confirmed` | ✅ Payment received and confirmed |
-| `expired` | ⏱️ Payment timeout (15 min) |
-| `cancelled` | ❌ Cancelled by customer or merchant |
-| `failed` | 💥 Transaction failed |
-
----
-
-## 🎨 Frontend Examples
-
-### React Component
+`qrCode` and `qrUri` contain a URI such as `aureus://pay?id=...` or `skyzai://pay?id=...`, not an image.
+Render that URI with a QR library, for example `react-qr-code`:
 
 ```jsx
-import { useState, useEffect } from 'react';
-import AureusPay from 'aureus-pay';
+import QRCode from 'react-qr-code';
 
-function CheckoutPage({ orderId, amount }) {
-  const [payment, setPayment] = useState(null);
-  const [status, setStatus] = useState('creating');
-
-  useEffect(() => {
-    const aureus = new AureusPay({
-      apiKey: process.env.AUREUS_API_KEY,
-      environment: 'production'
-    });
-
-    async function createPayment() {
-      const p = await aureus.payments.create({
-        amount: amount,
-        currency: 'USDC',
-        orderId: orderId
-      });
-
-      p.on('confirmed', () => {
-        setStatus('confirmed');
-        // Redirect to success page
-        window.location.href = '/order-success';
-      });
-
-      p.on('expired', () => setStatus('expired'));
-      p.startListening();
-      
-      setPayment(p);
-      setStatus('pending');
-    }
-
-    createPayment();
-  }, []);
-
-  if (status === 'creating') return <div>Loading...</div>;
-  if (status === 'expired') return <div>Payment expired. Please try again.</div>;
-  
+// checkout is the safe JSON returned by your server route.
+export function PaymentQR({ checkout }) {
   return (
     <div>
-      <h1>Scan to Pay ${amount} USDC</h1>
-      <img src={payment.qrCode} alt="Payment QR Code" />
-      <p>Status: {status}</p>
+      <QRCode value={checkout.qrUri} title="Scan with your payment wallet" />
+      <p>Scan with your wallet to pay.</p>
     </div>
   );
 }
 ```
 
-### Express.js Backend
+Install the renderer separately with `npm install react-qr-code`.
+Wallet URI support depends on the installed app and platform; the SDK does not supply an app-install fallback or guarantee browser deep-link handling.
 
-```javascript
-const express = require('express');
-const AureusPay = require('aureus-pay');
+## Development and release
 
-const app = express();
-const aureus = new AureusPay({
-  apiKey: process.env.AUREUS_API_KEY,
-  environment: 'production'
-});
-
-app.post('/api/create-payment', async (req, res) => {
-  const { amount, orderId } = req.body;
-  
-  try {
-    const payment = await aureus.payments.create({
-      amount,
-      currency: 'USDC',
-      orderId,
-      metadata: {
-        userId: req.user.id
-      }
-    });
-
-    // Listen for confirmation in background
-    payment.on('confirmed', async (data) => {
-      // Update database
-      await db.orders.update(orderId, {
-        status: 'paid',
-        txHash: data.txHash
-      });
-      
-      // Send confirmation email
-      await sendEmail(req.user.email, 'Payment Confirmed');
-    });
-
-    payment.startListening();
-
-    res.json({
-      paymentId: payment.id,
-      qrCode: payment.qrCode,
-      deepLink: payment.deepLink
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.listen(3000);
+```sh
+npm ci
+npm test
+npm pack --dry-run
 ```
 
----
+Tests use fake local HTTP responses and do not call either real backend.
+Version 2.1.0 adds backend/auth configuration and the paid alias, repairs monitoring and response handling, corrects QR/order/module/security documentation, and requires Node 18+.
+The dashboard example is a legacy merchant-browser terminal, not a safe public buyer-checkout template.
+Its completion listener is updated, but move its credential handling to a server before using it as a public checkout.
 
-## ⚡ Best Practices
-
-### ✅ DO
-
-- **Always call `payment.startListening()`** after creating a payment
-- **Store `payment.id`** in your database for order tracking
-- **Handle all events** (`confirmed`, `expired`, `failed`)
-- **Use testnet** during development
-- **Set meaningful `orderId`** for easy reconciliation
-- **Add customer info** in `metadata` for support
-
-### ❌ DON'T
-
-- Don't show QR code without calling `startListening()`
-- Don't reuse payments - create new payment for each order
-- Don't expose your API key in frontend code
-- Don't assume payment confirmed without `confirmed` event
-
----
-
-## 🔒 Security
-
-- **Never expose your API key** in client-side code
-- **Always validate** payment confirmation on your backend
-- **Use webhooks** (coming soon) for production reliability
-- **Store API keys** in environment variables
-
-```bash
-# .env file
-AUREUS_API_KEY=your_api_key_here
-```
-
----
-
-## 🌍 Supported Networks
-
-- ✅ **Hedera** (USDC, USDT, HBAR)
-- ✅ **Ethereum** (USDC, USDT)
-- ✅ **Polygon** (USDC, USDT)
-- ✅ **Base** (USDC)
-- ✅ **Arbitrum** (USDC, USDT)
-- ✅ **Optimism** (USDC, USDT)
-
----
-
-## 🆘 Troubleshooting
-
-### "Invalid API Key"
-- Check your API key is correct
-- Ensure you're using the right environment (`production` vs `testnet`)
-- Regenerate key in Aureus app if needed
-
-### Payment not confirming
-- Wait up to 30 seconds for blockchain confirmation
-- Check customer scanned the correct QR code
-- Verify customer has sufficient balance
-- Check `payment.status` for error details
-
-### Events not firing
-- Make sure you called `payment.startListening()`
-- Check console for WebSocket connection errors
-- Verify your server allows WebSocket connections
-
----
-
-## 📞 Support
-
-- 📖 **Documentation:** [docs.aureus.com](https://docs.aureus.com)
-- 💬 **Discord:** [discord.gg/aureus](https://discord.gg/aureus)
-- 📧 **Email:** support@aureus.com
-- 🐛 **Issues:** [GitHub Issues](https://github.com/aureus-wallet/aureus-pay-sdk/issues)
-
----
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) file for details
-
----
-
-## 🎉 Examples
-
-Check out complete examples:
-- [React E-commerce](./examples/react-ecommerce)
-- [Express API](./examples/express-api)
-- [Next.js Full Stack](./examples/nextjs-fullstack)
-
----
-
-**Made with ❤️ by Aureus**  
-[Website](https://aureus.com) • [GitHub](https://github.com/aureus-wallet) • [Twitter](https://twitter.com/aureuswallet)
+[Source](https://github.com/Menexus-GmbH/aureus-pay-sdk) · [Issues](https://github.com/Menexus-GmbH/aureus-pay-sdk/issues)
+MIT License - see [LICENSE](LICENSE).

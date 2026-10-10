@@ -113,10 +113,6 @@ export function setupPaymentListeners(payment, terminal, callbacks, addLog) {
     addLog('event', `Status Change: ${status}`);
     onStatusChange(status);
     
-    // ✅ ADD THIS - Handle "completed" status from mobile app
-    if (status === 'completed' || status === 'confirmed') {
-      handlePaymentComplete();
-    }
   });
 
   // Confirmed event
