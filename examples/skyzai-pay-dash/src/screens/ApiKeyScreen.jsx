@@ -20,7 +20,7 @@ const ApiKeyScreen = ({
               <ShieldCheck className="text-white h-6 w-6" />
             </div>
           </div>
-          <h1 className="text-3xl font-bold tracking-tight">Aureus Pay</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Skyzai Pay</h1>
           <p className="text-slate-500 dark:text-slate-400">Secure Payment Terminal Initialization</p>
         </div>
 
@@ -61,7 +61,7 @@ const ApiKeyScreen = ({
                 <ul className="text-xs text-red-700 dark:text-red-300 space-y-1 list-disc list-inside">
                   <li>Token is expired or invalid</li>
                   <li>Token was copied incorrectly</li>
-                  <li>Need to generate new token from Aureus app</li>
+                  <li>Need to generate new token from Skyzai app</li>
                 </ul>
               </div>
 

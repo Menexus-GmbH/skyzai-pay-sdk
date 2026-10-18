@@ -1,30 +1,39 @@
 {
-  "name": "aureus-pay",
-  "version": "2.0.0",
-  "description": "Accept crypto payments (USDC/USDT) with Aureus on Hedera and EVM chains",
+  "name": "skyzai-pay",
+  "version": "3.0.0",
+  "description": "Accept Hedera USDC payments with Skyzai Pay",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
-    "test": "node examples/basic.js"
+    "test": "node --test test/sdk.test.js",
+    "test:e2e": "node --test test/payment.e2e.test.js",
+    "test:server-requirements": "node --test test/server-requirements.test.js"
   },
   "keywords": [
-    "aureus",
-    "crypto",
+    "skyzai",
+    "skyzai-pay",
     "payments",
     "hedera",
-    "usdc",
-    "usdt",
-    "blockchain",
-    "web3",
-    "aureus-pay"
+    "usdc"
   ],
-  "author": "Aureus",
+  "author": "Skyzai",
   "license": "MIT",
   "dependencies": {
-    "axios": "^1.6.0",
-    "firebase": "^10.7.0"
+    "events": "^3.3.0"
   },
   "engines": {
-    "node": ">=16.0.0"
-  }
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Menexus-GmbH/skyzai-pay-sdk.git"
+  },
+  "homepage": "https://github.com/Menexus-GmbH/skyzai-pay-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/Menexus-GmbH/skyzai-pay-sdk/issues"
+  },
+  "files": [
+    "src/",
+    "README.md"
+  ]
 }

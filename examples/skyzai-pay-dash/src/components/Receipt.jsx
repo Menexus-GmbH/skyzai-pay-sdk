@@ -52,7 +52,7 @@ const Receipt = ({ payment, product, businessInfo, selectedChains, onClose }) =>
               Payment Receipt
             </h2>
             <p className="text-slate-500 dark:text-slate-400">
-              {businessInfo?.businessName || 'Aureus Pay'}
+              {businessInfo?.businessName || 'Skyzai Pay'}
             </p>
           </div>
           
@@ -160,7 +160,7 @@ const Receipt = ({ payment, product, businessInfo, selectedChains, onClose }) =>
           {/* Footer */}
           <div className="border-t border-slate-200 dark:border-slate-700 pt-4 text-center text-xs text-slate-500 dark:text-slate-400">
             <p>Thank you for your business!</p>
-            <p className="mt-1">Powered by Aureus Pay</p>
+            <p className="mt-1">Powered by Skyzai Pay</p>
           </div>
         </div>
         

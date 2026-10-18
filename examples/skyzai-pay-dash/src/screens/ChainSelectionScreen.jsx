@@ -49,7 +49,7 @@ const ChainSelectionScreen = ({
                     </div>
                     <p className="text-xs text-slate-500 font-mono mb-1">{chain.address}</p>
                     <p className="text-xs text-slate-400">
-                      {chain.tokens?.join(', ') || 'USDC, USDT'}
+                      {chain.tokens?.join(', ') || 'USDC'}
                     </p>
                   </button>
                 );
@@ -59,7 +59,7 @@ const ChainSelectionScreen = ({
             <div className="text-center py-8 text-slate-500">
               <AlertCircle className="h-12 w-12 mx-auto mb-3 opacity-20" />
               <p>No wallet addresses found for this business.</p>
-              <p className="text-sm mt-2">Please set up wallet addresses in your Aureus app.</p>
+              <p className="text-sm mt-2">Please set up wallet addresses in your Skyzai app.</p>
             </div>
           )}
 

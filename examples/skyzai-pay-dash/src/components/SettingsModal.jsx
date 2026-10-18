@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
-import { X, Link2, CheckCircle2, AlertCircle, ShieldCheck, ArrowLeft } from 'lucide-react';
-import { useSettings } from '../context/SettingsContext';
-import { initializeAureus } from '../services/aureusService';
-import { cn } from '../utils/cn';
+import { X, AlertCircle, ShieldCheck, ArrowLeft } from 'lucide-react';
+import { useSettings } from '../context/useSettings';
+import { initializeSkyzai } from '../services/skyzaiService';
 import Input from '../components/ui/Input';
 import Button from '../components/ui/Button';
 
@@ -12,13 +11,14 @@ const SettingsModal = ({ onClose }) => {
   const [localApiKey, setLocalApiKey] = useState(apiKey);
   const [error, setError] = useState('');
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!localApiKey || localApiKey.trim() === '') {
       setError('Please enter an API key');
       return;
     }
     
-    saveSettings(localApiKey, [], true);
+    const { instance, businessData } = await initializeSkyzai(localApiKey, () => {});
+    saveSettings(localApiKey, businessData.chains, true, instance, businessData);
     onClose();
   };
 
@@ -42,7 +42,7 @@ const SettingsModal = ({ onClose }) => {
               <ArrowLeft className="h-5 w-5 text-slate-700 dark:text-slate-300" />
             </button>
             <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">
-              Aureus Pay Settings
+              Skyzai Pay Settings
             </h2>
           </div>
           <button
@@ -61,16 +61,16 @@ const SettingsModal = ({ onClose }) => {
                   <ShieldCheck className="text-white h-6 w-6" />
                 </div>
               </div>
-              <h3 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Configure Aureus Pay</h3>
+              <h3 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Configure Skyzai Pay</h3>
               <p className="text-slate-600 dark:text-slate-300">
-                Enter your API token to enable cryptocurrency payments
+                Enter your Skyzai merchant API key for this local demo session
               </p>
             </div>
 
             <div className="space-y-4">
               <Input
-                label="API Authorization Token"
-                type="text"
+                label="Merchant API Key"
+                type="password"
                 placeholder="Enter your token..."
                 value={localApiKey}
                 onChange={(e) => setLocalApiKey(e.target.value)}

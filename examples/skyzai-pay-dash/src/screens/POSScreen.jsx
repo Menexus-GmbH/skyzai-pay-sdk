@@ -18,7 +18,6 @@ import { products } from '../data/products';
 const POSScreen = ({
   businessInfo,
   selectedChains,
-  terminal,
   activePayment,
   selectedProduct,
   paymentStatus,
@@ -129,7 +128,7 @@ const POSScreen = ({
                     {/* QR Code */}
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 inline-block">
                       <QRCode
-                        value={`aureus://pay?id=${activePayment.id}`}
+                        value={activePayment.getQRCode()}
                         size={200}
                         className="h-auto w-full max-w-[200px]"
                       />

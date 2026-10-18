@@ -1,558 +1,173 @@
-# Aureus Pay SDK 💳
+# Skyzai Pay
 
-**Accept cryptocurrency payments effortlessly**  
-Enable USDC/USDT payments on Hedera and EVM chains with just a few lines of code.
+Accept USDC payments on Hedera with the Skyzai merchant SDK.
+The package is `skyzai-pay` and its default export is `SkyzaiPay`.
+It targets the Skyzai backend exclusively.
 
----
-
-## 🏗️ Account Architecture
-
-Understanding how Aureus manages accounts:
-
-### Personal Account
-When you sign up, you get:
-- **Hedera (HTS) Wallet** - Your personal crypto wallet
-- **Nostr Profile** - Decentralized identity
-- *Optional:* **EVM Wallets** - Create wallets on Ethereum, Polygon, Base, Arbitrum, Optimism, etc.
-
-### Business Account
-When you create a business, you get:
-- **Hedera Multi-Sig Account (HTS)** 
-  - Signed with your personal HTS private key
-  - Invite team members for multi-signature security
-  - Primary account for receiving crypto payments
-
-- **Safe Global Multi-Sig Wallets**
-  - EVM-compatible (Ethereum, Polygon, Base, etc.)
-  - Signed with your personal EVM wallet keys
-  - Multi-chain payment support
-
-- **Business Nostr Profile**
-  - Used for business identity and authentication
-  - Sign in to business account with Nostr private key
-
-### API Key Authentication
-- API keys are **Business Account specific**
-- Generated in: Business Settings → Aureus Pay → API Key
-- Used to authenticate payment requests via SDK
-- Each business can have separate API keys
-
-```
-Personal Account (Google/Apple/Email)
-    ├── Hedera (HTS) Wallet
-    ├── Nostr Profile  
-    └── EVM Wallets (Optional)
-         └── Ethereum, Polygon, Base, etc.
-
-Business Account (Multi-Sig)
-    ├── Hedera Multi-Sig (HTS)
-    │    └── Signed with Personal HTS Key
-    ├── Safe Global EVM Multi-Sig
-    │    └── Signed with Personal EVM Keys
-    ├── Business Nostr Profile
-    └── API Keys (for SDK)
+```sh
+npm install skyzai-pay
 ```
 
----
+Requires Node.js 18+ or a browser with Fetch and AbortController.
+This package uses ES modules.
 
-## 📦 Installation
+## Merchant setup
 
-```bash
-npm install aureus-pay
-```
+Obtain a merchant API key from Skyzai's `generateAPIKey` flow for a KYB-approved business that you administer.
+The key is an HS256 JWT containing a `keyId` linked to the server's `APIKeys` record.
+The SDK sends it as `Authorization: Bearer <apiKey>` to `createPayment`, `getPayment`, and `cancelPayment`.
+Keys containing control or non-ASCII characters are rejected before any request.
+A Firebase custom token or Firebase ID token cannot replace this merchant key.
+Expired or revoked keys must be replaced through Skyzai.
 
----
+Keep the key on your merchant server and expose only your own authenticated checkout endpoints to shoppers.
+Do not ship the key in a public web bundle or store it in browser local storage.
+The included browser dashboard is a trusted local integration demo only.
 
-## 🚀 Quick Start (5 minutes)
+```js
+import SkyzaiPay from 'skyzai-pay';
 
-### 1. Get Your API Key
-
-**Step 1: Create Your Account**
-1. Download the [Aureus Wallet App](https://aureus.money)
-2. Sign up with Google, Apple, or Email
-   - Your personal Hedera (HTS) account is created automatically
-   - Your Nostr profile is generated
-
-**Step 2: Create a Business Account**
-1. In the app, go to **Business** → **Create Business Account**
-2. Your business gets:
-   - ✅ **Hedera Multi-Sig Account** (HTS) - signed with your personal HTS key
-   - ✅ **Safe Global EVM Wallets** - multi-chain support (Ethereum, Polygon, Base, etc.)
-   - ✅ **Nostr Account** - for business identity
-3. *Optional:* Invite team members to the multi-sig
-
-**Step 3: Generate API Key**
-1. **Log in as your Business** (switch from personal to business account)
-2. Go to **Settings** → **Aureus Pay** → **API Key**
-3. Click **Generate API Key**
-4. Copy the key (keep it secure!)
-
-> ⚠️ **Important:** 
-> - API keys are tied to your **Business Account**, not your personal account
-> - You must be logged into your business to generate/use API keys
-> - Multi-sig business accounts provide enhanced security for payment processing
-
-### 2. Create Your First Payment
-
-```javascript
-const AureusPay = require('aureus-pay');
-
-// Initialize with your API key
-const aureus = new AureusPay({
-  apiKey: 'your-api-key-here',
-  environment: 'production' // Use 'testnet' for testing
-});
-
-// Create a payment request
-const payment = await aureus.payments.create({
-  amount: '10.00',        // Amount in USD
-  currency: 'USDC',       // USDC or USDT
-  orderId: 'ORDER_123'    // Your order reference
-});
-
-// Show QR code to customer
-console.log('Payment QR Code:', payment.qrCode);
-console.log('Deep Link:', payment.deepLink);
-
-// Listen for payment confirmation
-payment.on('confirmed', (data) => {
-  console.log('✅ Payment received!');
-  console.log('Transaction:', data.txHash);
-  // ✨ Fulfill order, send receipt, etc.
-});
-
-// Start monitoring for payment
-payment.startListening();
-```
-
-### 3. Display Payment to Customer
-
-**Option A: QR Code** (Recommended)
-```javascript
-// Show QR code image
-<img src={payment.qrCode} alt="Scan to pay" />
-```
-
-**Option B: Deep Link** (Mobile)
-```javascript
-// Redirect mobile users
-window.location.href = payment.deepLink;
-// Opens Aureus app directly
-```
-
----
-
-## 📚 Complete API Reference
-
-### Initialize SDK
-
-```javascript
-const aureus = new AureusPay({
-  apiKey: 'your-api-key',        // Required: Get from Aureus app
-  environment: 'production'       // 'production' or 'testnet'
-});
-```
-
-**Parameters:**
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `apiKey` | string | ✅ Yes | Your API key from Aureus app |
-| `environment` | string | ❌ No | `'production'` (default) or `'testnet'` |
-
----
-
-### Create Payment
-
-```javascript
-const payment = await aureus.payments.create({
-  amount: '100.00',
+const skyzai = new SkyzaiPay({ apiKey: process.env.SKYZAI_API_KEY });
+const payment = await skyzai.payments.create({
+  amount: '10.123456',
   currency: 'USDC',
-  orderId: 'ORDER_123',
-  metadata: {
-    customerEmail: 'customer@example.com',
-    productName: 'Premium Subscription'
-  }
-});
-```
-
-**Parameters:**
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `amount` | string | ✅ Yes | Payment amount (e.g., `'10.00'`) |
-| `currency` | string | ✅ Yes | `'USDC'` or `'USDT'` |
-| `orderId` | string | ❌ No | Your internal order reference |
-| `metadata` | object | ❌ No | Custom data (stored with payment) |
-
-**Returns:** Payment object (see below)
-
----
-
-### Listen for Events
-
-```javascript
-// Monitor payment status changes
-payment.on('status_change', (status) => {
-  console.log('Status updated:', status);
-  // 'pending' → 'processing' → 'confirmed'
+  network: 'mainnet',
+  metadata: { orderId: 'order-123' },
 });
 
-// Payment confirmed (funds received)
-payment.on('confirmed', (data) => {
-  console.log('✅ Payment confirmed!');
-  console.log('Transaction hash:', data.txHash);
-  console.log('Confirmed at:', data.confirmedAt);
-  // Fulfill order here
-});
+// Render this value as a QR code or link for the buyer's Skyzai app.
+console.log(payment.getQRCode()); // skyzai://pay?id=...
 
-// Payment expired (15 min timeout)
-payment.on('expired', () => {
-  console.log('⏱️ Payment expired');
-  // Notify customer to retry
+payment.on('error', error => console.error(error.message));
+payment.on('status_change', status => console.log(status));
+payment.on('confirmed', paid => {
+  console.log(paid.status, paid.txHash); // completed, verified chain transaction ID
 });
-
-// Payment cancelled by customer
-payment.on('cancelled', () => {
-  console.log('❌ Payment cancelled');
-});
-
-// Payment failed
-payment.on('failed', (error) => {
-  console.log('💥 Payment failed:', error);
-});
-
-// Start listening (required!)
+payment.on('expired', () => console.log('Request expired'));
+payment.on('cancelled', () => console.log('Request cancelled'));
+payment.on('failed', () => console.log('Payment failed'));
 payment.startListening();
+
+// On shutdown or when leaving the checkout:
+// payment.stopListening();
 ```
 
-**Event Timeline:**
-```
-Create Payment
-     ↓
-'pending' → Customer scans QR
-     ↓
-'processing' → Transaction submitted
-     ↓
-'confirmed' → Payment received ✅
-```
+## Payment contract
 
----
+`payments.create({ amount, currency, network, metadata })` returns a `Payment`.
+Amounts are decimal strings in whole token units: `'10.123456'` means 10.123456 USDC, or 10,123,456 smallest units.
+The default mainnet USDC token is `0.0.456858` with six decimals, resolved by the server.
+USDC and USD amounts with more than six decimal places, an unsafe integer number of smallest units, or precision loss in the server's numeric conversion are rejected before sending.
+Use strings to preserve decimals; exponent notation is not accepted.
 
-### Get Payment Status
+`currency` accepts `USDC`, `USD` (settled in USDC), or `USDT`.
+USDT requires server-side token configuration and otherwise returns HTTP 503.
+`network` defaults to `mainnet`; `testnet` is refused by the production server.
+The payment API supports Hedera settlement, even if a merchant profile contains EVM addresses.
+`metadata` is an optional object.
 
-```javascript
-// Retrieve existing payment
-const payment = await aureus.payments.get('payment_xyz123');
-
-console.log(payment.status);     // Current status
-console.log(payment.amount);     // Payment amount
-console.log(payment.confirmedAt); // When confirmed (if confirmed)
+```js
+const payment = await skyzai.payments.get('payment-id');
+await payment.refresh(); // Updates the same object through getPayment?id=...
+const cancelled = await skyzai.payments.cancel('payment-id');
 ```
 
----
+`Payment` exposes `id`/`paymentId`, `status`, `amount`, `currency`, `userId`, `userEmail`, `userName`, `metadata`, `destinations`, `txHash`, `qrCode`, and `deepLink`.
+`createdAt`, `expiresAt`, `confirmedAt`, and `updatedAt` are `Date` values when returned by the server, otherwise `null`.
+The creation response contains fewer fields than the get response; call `refresh()` for the full record.
 
-### Cancel Payment
+`startListening()` polls authenticated `getPayment` requests every three seconds by default.
+Refresh and polling share request ordering, so an older response cannot overwrite a newer request's result.
+Terminal states never return to pending, and `stopListening()` discards in-flight responses.
+It does not sign in to Firebase or access Firestore directly.
+The server stores these requests in `transactions`.
 
-```javascript
-// Cancel pending payment
-await aureus.payments.cancel('payment_xyz123');
+| Event | Meaning |
+| --- | --- |
+| `status_change` | Server status changed; argument is the status string |
+| `completed` | Server verified settlement; argument is the updated `Payment` |
+| `confirmed` | Compatibility success callback, also emitted for `completed` |
+| `expired`, `failed`, `cancelled` | Terminal server state; argument is the updated `Payment` |
+| `error` | HTTP, authentication, or transport failure; argument is an `Error` |
+| `monitoring_stopped` | Expiry grace elapsed; argument is the `Payment` with the last server status |
+
+Subscribe to either `completed` or `confirmed` for fulfillment, so you do not handle success twice.
+Always attach an `error` listener before starting monitoring.
+Terminal states stop polling automatically.
+Authentication, access, and missing-payment errors also stop polling; transient errors are reported and retried on the next interval.
+Calling `startListening()` repeatedly does not create duplicate polling loops.
+`stopListening()` suppresses an in-flight poll's result and prevents further polling.
+
+`isExpired()` checks the server's `expiresAt` against the local clock for a pending request, or returns true for server status `expired`.
+It does not invent a server status or confirm a payment.
+At `expiresAt + expiryGrace` (two minutes by default), monitoring makes one final `getPayment` request, surfaces the result, and stops even if the server still says `pending`.
+In that case `monitoring_stopped` reports the final server status without fabricating `expired` or success.
+If the final request fails, `error` is emitted and `monitoring_stopped` carries the last known status.
+The backend enforces settlement expiry separately; see the server release gate below.
+
+### Buyer completion boundary
+
+The buyer's Skyzai app makes the Hedera transfer with memo `Payment: <paymentId>` and calls Firebase callable `completeSkyzaiPayment` with its own authenticated session:
+
+```js
+// Buyer app contract, not a merchant SDK method:
+// data: { transactionId: paymentId, onChainTransactionId: hederaTransactionId }
 ```
 
-⚠️ **Note:** Can only cancel payments with status `'pending'`
+The server checks the mirror transaction's success, destination, token, amount, memo, and redemption ledger before recording `completed` with `txHash` and `confirmedAt`.
+The merchant observes that result through `getPayment` or polling.
+This SDK neither sends on-chain transfers nor wraps buyer completion.
 
----
+### Configuration and errors
 
-## 🎯 Payment Object
-
-Every payment has these properties:
-
-```javascript
-{
-  // Identifiers
-  id: 'payment_xyz123',           // Unique payment ID
-  orderId: 'ORDER_123',           // Your order reference
-  
-  // Amount & Currency
-  amount: '10.00',                // Payment amount
-  currency: 'USDC',               // USDC or USDT
-  
-  // Status
-  status: 'confirmed',            // See statuses below
-  
-  // Display to Customer
-  qrCode: 'data:image/png;base64,...',  // QR code image (Base64)
-  deepLink: 'aureus://pay?id=xyz123',   // Mobile deep link
-  
-  // Timing
-  createdAt: Date,                // When created
-  expiresAt: Date,                // Expires 15 min after creation
-  confirmedAt: Date,              // When confirmed (if confirmed)
-  
-  // Blockchain Details (after confirmation)
-  txHash: '0xabc...',             // Transaction hash
-  network: 'hedera',              // 'hedera', 'ethereum', etc.
-  
-  // Custom Data
-  metadata: { ... }               // Your custom data
-}
-```
-
-### Payment Statuses
-
-| Status | Description |
-|--------|-------------|
-| `pending` | Waiting for customer to pay |
-| `processing` | Transaction submitted to blockchain |
-| `confirmed` | ✅ Payment received and confirmed |
-| `expired` | ⏱️ Payment timeout (15 min) |
-| `cancelled` | ❌ Cancelled by customer or merchant |
-| `failed` | 💥 Transaction failed |
-
----
-
-## 🎨 Frontend Examples
-
-### React Component
-
-```jsx
-import { useState, useEffect } from 'react';
-import AureusPay from 'aureus-pay';
-
-function CheckoutPage({ orderId, amount }) {
-  const [payment, setPayment] = useState(null);
-  const [status, setStatus] = useState('creating');
-
-  useEffect(() => {
-    const aureus = new AureusPay({
-      apiKey: process.env.AUREUS_API_KEY,
-      environment: 'production'
-    });
-
-    async function createPayment() {
-      const p = await aureus.payments.create({
-        amount: amount,
-        currency: 'USDC',
-        orderId: orderId
-      });
-
-      p.on('confirmed', () => {
-        setStatus('confirmed');
-        // Redirect to success page
-        window.location.href = '/order-success';
-      });
-
-      p.on('expired', () => setStatus('expired'));
-      p.startListening();
-      
-      setPayment(p);
-      setStatus('pending');
-    }
-
-    createPayment();
-  }, []);
-
-  if (status === 'creating') return <div>Loading...</div>;
-  if (status === 'expired') return <div>Payment expired. Please try again.</div>;
-  
-  return (
-    <div>
-      <h1>Scan to Pay ${amount} USDC</h1>
-      <img src={payment.qrCode} alt="Payment QR Code" />
-      <p>Status: {status}</p>
-    </div>
-  );
-}
-```
-
-### Express.js Backend
-
-```javascript
-const express = require('express');
-const AureusPay = require('aureus-pay');
-
-const app = express();
-const aureus = new AureusPay({
-  apiKey: process.env.AUREUS_API_KEY,
-  environment: 'production'
+```js
+const skyzai = new SkyzaiPay({
+  apiKey: process.env.SKYZAI_API_KEY,
+  pollInterval: 3000,
+  timeout: 30000,
+  expiryGrace: 120000,
+  debug: false,
 });
-
-app.post('/api/create-payment', async (req, res) => {
-  const { amount, orderId } = req.body;
-  
-  try {
-    const payment = await aureus.payments.create({
-      amount,
-      currency: 'USDC',
-      orderId,
-      metadata: {
-        userId: req.user.id
-      }
-    });
-
-    // Listen for confirmation in background
-    payment.on('confirmed', async (data) => {
-      // Update database
-      await db.orders.update(orderId, {
-        status: 'paid',
-        txHash: data.txHash
-      });
-      
-      // Send confirmation email
-      await sendEmail(req.user.email, 'Payment Confirmed');
-    });
-
-    payment.startListening();
-
-    res.json({
-      paymentId: payment.id,
-      qrCode: payment.qrCode,
-      deepLink: payment.deepLink
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.listen(3000);
 ```
 
----
+The backend URL is `https://us-central1-skyzai-16e1b.cloudfunctions.net`.
+An explicit `baseURL` may select a local HTTP test server on `127.0.0.1` or `[::1]`, optionally with an emulator path prefix.
+Other remote origins are rejected and HTTP redirects are refused.
+Configure local URLs only from trusted application configuration.
+Debug output contains method, endpoint name, and HTTP status, never the API key.
+HTTP errors expose `error.status` and the server message, including 401 invalid/expired key, 403 revoked key or access denied, 404 missing payment, 429 rate limit, and 503 unconfigured currency.
+The SDK does not automatically retry payment creation.
 
-## ⚡ Best Practices
+## MIGRATION: aureus-pay 2.x to skyzai-pay 3.0
 
-### ✅ DO
+1. Replace the dependency with `skyzai-pay@^3.0.0` and import `SkyzaiPay`.
+2. Supply a Skyzai merchant `apiKey`; remove custom-token/Firebase initialization and old backend configuration.
+3. Use the returned `skyzai://pay` QR/deep link and Hedera settlement.
+4. Treat `completed` as success; existing `confirmed` callbacks remain supported.
+5. Call `payment.refresh()` without an HTTP-client argument and dispose polling with `stopListening()`.
+6. Keep buyer completion in the buyer app and merchant credentials on your server.
 
-- **Always call `payment.startListening()`** after creating a payment
-- **Store `payment.id`** in your database for order tracking
-- **Handle all events** (`confirmed`, `expired`, `failed`)
-- **Use testnet** during development
-- **Set meaningful `orderId`** for easy reconciliation
-- **Add customer info** in `metadata` for support
+A deprecated named `AureusPay` export remains as an alias of `SkyzaiPay` only.
+It has the same Skyzai-only constructor and behavior; old backend access is removed.
+Node.js 16 is no longer supported.
 
-### ❌ DON'T
+## Local verification
 
-- Don't show QR code without calling `startListening()`
-- Don't reuse payments - create new payment for each order
-- Don't expose your API key in frontend code
-- Don't assume payment confirmed without `confirmed` event
-
----
-
-## 🔒 Security
-
-### API Key Security
-- **Never expose your API key** in client-side code
-- **Always validate** payment confirmation on your backend
-- **Store API keys** in environment variables
-- **Rotate keys regularly** from business settings
-
-```bash
-# .env file
-AUREUS_API_KEY=your_business_api_key_here
+```sh
+npm ci
+npm test
+SKYZAI_APP_ROOT=/path/to/skyzai_app npm run test:e2e
+SKYZAI_APP_ROOT=/path/to/skyzai_app npm run test:server-requirements
 ```
 
-### Multi-Signature Security
-Business accounts use multi-sig for enhanced security:
+The Skyzai checkout must have its `functions/node_modules` installed, including TypeScript and jsonwebtoken.
+The harness transpiles the actual server source in memory and runs the SDK through a loopback HTTP server.
+It executes real `createGenerateAPIKeyHandler`, `validateJWT`, `createPayment`, `getPayment`, `cancelPayment`, `createCompleteSkyzaiPaymentHandler`, token resolution, transfer evaluation, and payment-summary logic.
+It uses the server's `FakeDb`, local fixture signing material, a fake admin identity verifier, Firebase wrapper shims, and fake mirror responses.
+Unexpected external imports and outbound server fetches fail closed.
+No cloud SDK, credentials, real blockchain transfer, or mirror request is used.
 
-**Hedera Multi-Sig (HTS)**
-- Requires signatures from authorized team members
-- Configurable threshold (e.g., 2 of 3 signatures required)
-- All payment settlements go through multi-sig verification
+The separate server-requirements suite is a release gate for merchant expiry enforcement and JWT-secret bindings.
+It must pass against the server version used for release; passing SDK tests alone is insufficient.
 
-**Safe Global Multi-Sig (EVM)**
-- Industry-standard multi-sig wallet protocol
-- Team member management with customizable permissions
-- Secure cross-chain payment processing
-
-### Best Practices
-- ✅ Use **business accounts** for production payments
-- ✅ Invite trusted team members to multi-sig
-- ✅ Set appropriate signature thresholds
-- ✅ Monitor payment activity in business dashboard
-- ✅ Keep your Nostr private key secure (for business login)
-- ❌ Never share business Nostr private key
-- ❌ Don't use personal accounts for business payments
-
----
-
-## 🌍 Supported Networks
-
-Your business account can accept payments on:
-
-### Hedera (HTS) - Primary
-- **USDC** - USD Coin
-- **USDT** - Tether
-- **HBAR** - Native Hedera token
-- Uses your business multi-sig Hedera account
-
-### EVM Chains (via Safe Global)
-All supported through your business Safe multi-sig wallets:
-
-- **Ethereum** - USDC, USDT
-- **Polygon** - USDC, USDT  
-- **Base** - USDC
-- **Arbitrum** - USDC, USDT
-- **Optimism** - USDC, USDT
-- **BSC** - USDC, USDT
-
-> 💡 **Note:** You can enable/disable specific chains in your business settings. Customers can pay using any enabled chain/token combination.
-
----
-
-## 🆘 Troubleshooting
-
-### "Invalid API Key"
-- ✅ Check you're logged into your **Business Account** (not personal)
-- ✅ Verify API key was copied correctly (no extra spaces)
-- ✅ Ensure you're using the right environment (`production` vs `testnet`)
-- ✅ Regenerate key in Business Settings → Aureus Pay if needed
-- ❌ Personal account API keys won't work - must use business API key
-
-### "Business Account Required"
-- You must create a business account first
-- Go to Aureus app → Business → Create Business Account
-- Switch to business login before generating API key
-
-### Payment not confirming
-- ⏱️ Wait up to 30 seconds for blockchain confirmation
-- 🔍 Check customer scanned the correct QR code
-- 💰 Verify customer has sufficient balance
-- 🔗 Check enabled chains match customer's wallet
-- 📊 Check `payment.status` for error details
-- 🔐 Verify business multi-sig has no pending approvals blocking settlement
-
-### Events not firing
-- ✅ Make sure you called `payment.startListening()`
-- ✅ Check console for WebSocket connection errors
-- ✅ Verify your server allows WebSocket connections
-- ✅ Ensure API key is valid and not expired
-
-### Multi-Sig Issues
-- If payments pending approval, check business dashboard
-- Ensure sufficient signers are available
-- Verify signature threshold configuration
-- Team members must approve via Aureus app
-
----
-
-## 📞 Support
-
-- 📧 **Email:** dev@aureus.money
-- 🐛 **Issues:** [GitHub Issues](https://github.com/aureus-wallet/aureus-pay-sdk/issues)
-
----
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) file for details
-
----
-
-## 🎉 Examples
-
-Check out complete examples:
-- [React E-commerce](./examples/aureus-pay-dash)
-
----
-
-**Made with ❤️ by Aureus**  
-[Website](https://aureus.money)
+The [local dashboard](./examples/skyzai-pay-dash) exercises merchant checkout, polling, cancellation, and receipts.
