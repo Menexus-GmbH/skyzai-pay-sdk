@@ -1,0 +1,113 @@
+import Payment from './Payment.js';
+
+const BASE_URL = 'https://us-central1-skyzai-16e1b.cloudfunctions.net';
+
+function paymentId(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,200}$/.test(value)) {
+    throw new Error('Skyzai Pay: a valid paymentId is required');
+  }
+  return value;
+}
+
+class SkyzaiPay {
+  #apiKey;
+  constructor(config = {}) {
+    if (!config || typeof config.apiKey !== 'string' || !config.apiKey.trim()) {
+      throw new Error('Skyzai Pay: a merchant API key is required');
+    }
+    // Only Skyzai and an explicitly configured local test server may receive the key.
+    let endpoint;
+    try { endpoint = new URL(config.baseURL || BASE_URL); }
+    catch { throw new Error('Skyzai Pay: invalid baseURL'); }
+    const local = endpoint.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(endpoint.hostname);
+    if ((!local && endpoint.origin !== BASE_URL) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
+      throw new Error('Skyzai Pay: baseURL must use the Skyzai backend or a loopback test server');
+    }
+    this.#apiKey = config.apiKey.trim();
+    this.baseURL = endpoint.href.replace(/\/$/, '');
+    this.debug = config.debug === true;
+    this.pollInterval = config.pollInterval ?? 3000;
+    this.timeout = config.timeout ?? 30000;
+    this.expiryGrace = config.expiryGrace ?? 120000;
+    for (const name of ['pollInterval', 'timeout']) {
+      if (!Number.isInteger(this[name]) || this[name] <= 0 || this[name] > 2147483647) {
+        throw new Error(`Skyzai Pay: ${name} must be a positive timer interval in milliseconds`);
+      }
+    }
+    if (!Number.isInteger(this.expiryGrace) || this.expiryGrace < 0 || this.expiryGrace > 2147483647) {
+      throw new Error('Skyzai Pay: expiryGrace must be a non-negative timer interval in milliseconds');
+    }
+    this.payments = {
+      create: this.createPayment.bind(this),
+      get: this.getPayment.bind(this),
+      cancel: this.cancelPayment.bind(this),
+    };
+  }
+
+  async _request(path, method = 'GET', body) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeout);
+    try {
+      const response = await fetch(`${this.baseURL}/${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${this.#apiKey}`, 'Content-Type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: controller.signal,
+        redirect: 'error',
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const error = new Error(`Skyzai Pay: ${typeof data.error === 'string' ? data.error : data.message || response.statusText}`);
+        error.status = response.status;
+        throw error;
+      }
+      if (this.debug) console.log('[Skyzai Pay]', method, path.split('?')[0], response.status);
+      return data;
+    } catch (error) {
+      if (error.message.startsWith('Skyzai Pay:')) throw error;
+      throw new Error(`Skyzai Pay: ${controller.signal.aborted ? 'request timed out' : 'request failed'}`, { cause: error });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async createPayment(data = {}) {
+    if (!data || typeof data !== 'object') throw new Error('Skyzai Pay: payment data is required');
+    const { currency, metadata = {}, network = 'mainnet' } = data;
+    if (!['USDC', 'USDT', 'USD'].includes(currency)) {
+      throw new Error('Skyzai Pay: currency must be USDC, USDT, or USD');
+    }
+    const amount = typeof data.amount === 'number' || typeof data.amount === 'string' ? String(data.amount) : '';
+    if (amount.length > 100 || !/^(0|[1-9]\d*)(\.\d+)?$/.test(amount) || !(Number(amount) > 0) || !Number.isFinite(Number(amount))) {
+      throw new Error('Skyzai Pay: amount must be a positive decimal in whole token units');
+    }
+    if (currency === 'USDC' || currency === 'USD') {
+      const [whole, fraction = ''] = amount.split('.');
+      if (fraction.length > 6) throw new Error('Skyzai Pay: USDC amounts require at most 6 decimals');
+      const units = BigInt(whole + fraction.padEnd(6, '0'));
+      // The server verifies with Number(amount) * 10**6; reject any precision loss.
+      const serverUnits = Math.round(Number(amount) * 1e6);
+      if (!Number.isSafeInteger(serverUnits) || BigInt(serverUnits) !== units) {
+        throw new Error('Skyzai Pay: USDC amount cannot be represented safely in smallest units');
+      }
+    }
+    if (!['mainnet', 'testnet'].includes(network)) throw new Error('Skyzai Pay: network must be mainnet or testnet');
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new Error('Skyzai Pay: metadata must be an object');
+    const result = await this._request('createPayment', 'POST', { amount, currency, network, metadata });
+    return new Payment(result, this);
+  }
+
+  async _getPaymentData(id) {
+    return this._request(`getPayment?id=${encodeURIComponent(paymentId(id))}`);
+  }
+
+  async getPayment(id) {
+    return new Payment(await this._getPaymentData(id), this);
+  }
+
+  async cancelPayment(id) {
+    return new Payment(await this._request('cancelPayment', 'POST', { paymentId: paymentId(id) }), this);
+  }
+}
+
+export default SkyzaiPay;

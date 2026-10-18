@@ -1,8 +1,7 @@
-import AureusPay from './AureusPay.js';
+import SkyzaiPay from './SkyzaiPay.js';
 import Payment from './Payment.js';
 
-// Main export
-export default AureusPay;
-
-// Also export classes individually
-export { AureusPay, Payment };
+export default SkyzaiPay;
+export { SkyzaiPay, Payment };
+// Deprecated name only; this alias uses the same Skyzai backend and API-key contract.
+export { SkyzaiPay as AureusPay };

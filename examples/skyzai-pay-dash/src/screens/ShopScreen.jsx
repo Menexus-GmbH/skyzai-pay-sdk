@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ShoppingCart, Settings, Plus, Minus, Trash2 } from 'lucide-react';
-import { useCart } from '../context/CartContext';
-import { useSettings } from '../context/SettingsContext';
+import { useCart } from '../context/useCart';
+import { useSettings } from '../context/useSettings';
 import Button from '../components/ui/Button';
 import { products } from '../data/products';
 
@@ -146,12 +146,12 @@ const ShopScreen = ({ onOpenSettings, onCheckout }) => {
                       className="w-full"
                       disabled={!isConfigured}
                     >
-                      {isConfigured ? 'Checkout with Aureus Pay' : 'Setup Aureus Pay First'}
+                      {isConfigured ? 'Checkout with Skyzai Pay' : 'Setup Skyzai Pay First'}
                     </Button>
 
                     {!isConfigured && (
                       <p className="text-xs text-center text-slate-500">
-                        Click the settings icon to configure Aureus Pay
+                        Click the settings icon to configure Skyzai Pay
                       </p>
                     )}
                   </div>
