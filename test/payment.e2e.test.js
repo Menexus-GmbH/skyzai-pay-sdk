@@ -14,6 +14,61 @@ function buyerRequest(id) {
   return { auth: { uid: 'buyer', token: { firebase: { sign_in_provider: 'password' } } }, data: { transactionId: id, onChainTransactionId: CHAIN_TX } };
 }
 
+for (const [older, newer] of [['refresh', 'poll'], ['poll', 'refresh'], ['refresh', 'refresh']]) {
+  test(`delayed ${older} cannot overwrite real buyer completion observed by ${newer}`, async t => {
+    const { server, sdk } = await setup(t);
+    const payment = await sdk.payments.create({ amount: '10.123456', currency: 'USDC' });
+    t.after(() => payment.stopListening());
+    let capture;
+    const captured = new Promise(resolve => { capture = resolve; });
+    let release;
+    const held = new Promise(resolve => { release = resolve; });
+    t.after(release);
+    const getPaymentData = sdk._getPaymentData.bind(sdk);
+    let reads = 0;
+    let delivered;
+    // Delay delivery of the first real HTTP result without replacing any handler.
+    sdk._getPaymentData = async id => {
+      const first = ++reads === 1;
+      const result = await getPaymentData(id);
+      if (first) {
+        capture(result);
+        await held;
+        delivered();
+      }
+      return result;
+    };
+    const staleDelivered = new Promise(resolve => { delivered = resolve; });
+    const statuses = [];
+    payment.on('status_change', status => statuses.push(status));
+    let confirmations = 0;
+    payment.on('confirmed', () => { confirmations++; });
+    const staleRefresh = older === 'refresh' ? payment.refresh() : payment.startListening();
+    assert.equal((await captured).status, 'pending');
+    server.setMirror([transfer(payment.id)]);
+    const result = await server.complete(buyerRequest(payment.id));
+    assert.equal(result.status, 'completed');
+    if (newer === 'refresh') await payment.refresh();
+    else {
+      const completed = once(payment, 'completed', { signal: AbortSignal.timeout(3000) });
+      payment.startListening();
+      await completed;
+    }
+    release();
+    await staleRefresh;
+    await staleDelivered;
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(payment.status, 'completed');
+    assert.equal(payment.txHash, CHAIN_TX);
+    assert.equal(payment.confirmedAt.getTime(), Date.parse(result.confirmedAt));
+    assert.equal(payment._listening, false);
+    assert.equal(payment.listener, null);
+    assert.equal(confirmations, 1);
+    assert.deepEqual(statuses, ['completed']);
+    assert.equal((await sdk.payments.get(payment.id)).status, 'completed');
+  });
+}
+
 test('real key generation -> SDK create/get/monitor -> buyer completion -> SDK completed', async t => {
   const { server, sdk } = await setup(t);
   assert.equal(server.db.docs.get(`APIKeys/${server.keyId}`).generatedBy, 'admin-user');

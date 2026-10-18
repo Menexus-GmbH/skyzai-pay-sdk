@@ -8,12 +8,14 @@ class Payment extends EventEmitter {
     Object.defineProperty(this, 'client', { value: client });
     this.listener = null;
     this._generation = 0;
+    this._requestId = 0;
     this._listening = false;
     this._notifiedStatus = null;
     this._update(data, false);
   }
 
   _update(data, notify = true) {
+    if (TERMINAL.has(this.status) && !TERMINAL.has(data.status)) return;
     const oldStatus = this.status;
     this.id = data.paymentId || data.id;
     this.paymentId = this.id;
@@ -57,9 +59,7 @@ class Payment extends EventEmitter {
     const poll = async () => {
       const finalPoll = Date.now() >= deadline();
       try {
-        const data = await this.client._getPaymentData(this.id);
-        if (generation !== this._generation) return;
-        this._update(data);
+        await this.refresh();
       } catch (error) {
         if (generation !== this._generation) return;
         // A revoked/expired key or deleted payment cannot recover by polling.
@@ -93,7 +93,17 @@ class Payment extends EventEmitter {
   isExpired() { return this.status === 'expired' || (this.status === 'pending' && this.expiresAt !== null && Date.now() >= this.expiresAt.getTime()); }
 
   async refresh() {
-    this._update(await this.client._getPaymentData(this.id));
+    const generation = this._generation;
+    const requestId = ++this._requestId;
+    const isCurrent = () => generation === this._generation && requestId === this._requestId;
+    let data;
+    try {
+      data = await this.client._getPaymentData(this.id);
+    } catch (error) {
+      if (isCurrent()) throw error;
+      return this;
+    }
+    if (isCurrent()) this._update(data);
     return this;
   }
 }

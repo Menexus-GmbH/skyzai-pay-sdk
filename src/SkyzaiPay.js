@@ -2,6 +2,13 @@ import Payment from './Payment.js';
 
 const BASE_URL = 'https://us-central1-skyzai-16e1b.cloudfunctions.net';
 
+function merchantApiKey(value) {
+  if (typeof value !== 'string' || !value.trim() || /[^\x20-\x7e]/.test(value)) {
+    throw new Error('Skyzai Pay: a valid merchant API key is required');
+  }
+  return value.trim();
+}
+
 function paymentId(value) {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,200}$/.test(value)) {
     throw new Error('Skyzai Pay: a valid paymentId is required');
@@ -12,9 +19,7 @@ function paymentId(value) {
 class SkyzaiPay {
   #apiKey;
   constructor(config = {}) {
-    if (!config || typeof config.apiKey !== 'string' || !config.apiKey.trim()) {
-      throw new Error('Skyzai Pay: a merchant API key is required');
-    }
+    const apiKey = merchantApiKey(config?.apiKey);
     // Only Skyzai and an explicitly configured local test server may receive the key.
     let endpoint;
     try { endpoint = new URL(config.baseURL || BASE_URL); }
@@ -23,7 +28,7 @@ class SkyzaiPay {
     if ((!local && endpoint.origin !== BASE_URL) || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
       throw new Error('Skyzai Pay: baseURL must use the Skyzai backend or a loopback test server');
     }
-    this.#apiKey = config.apiKey.trim();
+    this.#apiKey = apiKey;
     this.baseURL = endpoint.href.replace(/\/$/, '');
     this.debug = config.debug === true;
     this.pollInterval = config.pollInterval ?? 3000;
@@ -45,30 +50,34 @@ class SkyzaiPay {
   }
 
   async _request(path, method = 'GET', body) {
+    const apiKey = merchantApiKey(this.#apiKey);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeout);
+    let response;
+    let data;
     try {
-      const response = await fetch(`${this.baseURL}/${path}`, {
+      response = await fetch(`${this.baseURL}/${path}`, {
         method,
-        headers: { Authorization: `Bearer ${this.#apiKey}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: controller.signal,
         redirect: 'error',
       });
-      const data = await response.json();
-      if (!response.ok) {
-        const error = new Error(`Skyzai Pay: ${typeof data.error === 'string' ? data.error : data.message || response.statusText}`);
-        error.status = response.status;
-        throw error;
-      }
-      if (this.debug) console.log('[Skyzai Pay]', method, path.split('?')[0], response.status);
-      return data;
-    } catch (error) {
-      if (error.message.startsWith('Skyzai Pay:')) throw error;
-      throw new Error(`Skyzai Pay: ${controller.signal.aborted ? 'request timed out' : 'request failed'}`, { cause: error });
+      data = await response.json();
+    } catch {
+      // Fetch errors may contain Authorization, including in non-enumerable fields.
+      throw new Error(`Skyzai Pay: ${controller.signal.aborted ? 'request timed out' : 'request failed'}`);
     } finally {
       clearTimeout(timer);
     }
+    if (!response.ok) {
+      const message = typeof data?.error === 'string' ? data.error : typeof data?.message === 'string' ? data.message : response.statusText;
+      const error = new Error(`Skyzai Pay: ${message.replaceAll(apiKey, '[redacted]')}`);
+      error.status = response.status;
+      throw error;
+    }
+    if (this.debug) console.log('[Skyzai Pay]', method, path.split('?')[0], response.status);
+    return data;
   }
 
   async createPayment(data = {}) {

@@ -16,6 +16,7 @@ This package uses ES modules.
 Obtain a merchant API key from Skyzai's `generateAPIKey` flow for a KYB-approved business that you administer.
 The key is an HS256 JWT containing a `keyId` linked to the server's `APIKeys` record.
 The SDK sends it as `Authorization: Bearer <apiKey>` to `createPayment`, `getPayment`, and `cancelPayment`.
+Keys containing control or non-ASCII characters are rejected before any request.
 A Firebase custom token or Firebase ID token cannot replace this merchant key.
 Expired or revoked keys must be replaced through Skyzai.
 
@@ -76,6 +77,8 @@ const cancelled = await skyzai.payments.cancel('payment-id');
 The creation response contains fewer fields than the get response; call `refresh()` for the full record.
 
 `startListening()` polls authenticated `getPayment` requests every three seconds by default.
+Refresh and polling share request ordering, so an older response cannot overwrite a newer request's result.
+Terminal states never return to pending, and `stopListening()` discards in-flight responses.
 It does not sign in to Firebase or access Firestore directly.
 The server stores these requests in `transactions`.
 

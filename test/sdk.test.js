@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { inspect } from 'node:util';
 import SkyzaiPay, { SkyzaiPay as NamedSkyzaiPay, AureusPay, Payment } from '../src/index.js';
 
 const data = { paymentId: 'pay-1', status: 'pending', amount: '1', currency: 'USDC', expiresAt: Date.now() + 900000, deepLink: 'skyzai://pay?id=pay-1' };
@@ -25,6 +26,52 @@ test('credentials, endpoint and timers are validated before any network request'
     assert.throws(() => new SkyzaiPay({ apiKey: 'fixture', baseURL }), /Skyzai backend/);
   }
   for (const pollInterval of [0, -1, NaN, 2147483648]) assert.throws(() => new SkyzaiPay({ apiKey: 'fixture', pollInterval }));
+});
+
+function assertCredentialSafe(error, pieces) {
+  assert.ok(error instanceof Error);
+  for (const output of [error.message, error.stack, inspect(error.cause), inspect(error, { showHidden: true }), JSON.stringify(error)]) {
+    for (const piece of pieces) assert.ok(!output.includes(piece), 'Error output must not expose a credential');
+  }
+  assert.equal(error.cause, undefined);
+  return true;
+}
+
+test('malformed credentials are rejected at construction without leaking through error output', () => {
+  const pieces = ['fixture-header', 'fixture-payload', 'fixture-signature'];
+  for (const invalid of ['\n', '\r', '\t', '\0', '\x7f', '\u0100']) {
+    const key = `${pieces[0]}.${pieces[1]}${invalid}.${pieces[2]}`;
+    assert.throws(() => new SkyzaiPay({ apiKey: key }), error => assertCredentialSafe(error, pieces));
+  }
+});
+
+test('transport errors discard credential-bearing messages, causes, and attached fields', async t => {
+  const apiKey = 'fixture-header.fixture-payload.fixture-signature';
+  const sdk = new SkyzaiPay({ apiKey });
+  // A transport error must not gain trust by copying the SDK's error prefix.
+  const failure = Object.assign(new Error(`Skyzai Pay: Bearer ${apiKey}`, { cause: new Error(apiKey) }), {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  t.mock.method(globalThis, 'fetch', async () => { throw failure; });
+  await assert.rejects(sdk.payments.get('pay-1'), error => {
+    assert.equal(error.message, 'Skyzai Pay: request failed');
+    return assertCredentialSafe(error, apiKey.split('.'));
+  });
+});
+
+test('HTTP errors redact an echoed Authorization value while retaining status', async t => {
+  const apiKey = 'fixture-header.fixture-payload.fixture-signature';
+  const server = createServer((_req, res) => {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: `Invalid Authorization: Bearer ${apiKey}` }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const sdk = new SkyzaiPay({ apiKey, baseURL: `http://127.0.0.1:${server.address().port}` });
+  await assert.rejects(sdk.payments.get('pay-1'), error => {
+    assert.equal(error.status, 401);
+    return assertCredentialSafe(error, apiKey.split('.'));
+  });
 });
 
 test('amounts use exact decimal token units and reject rounding or unsafe values', async () => {
@@ -77,6 +124,37 @@ test('stopListening discards an in-flight poll and does not schedule another', a
   assert.equal(payment.status, 'pending');
   assert.equal(requests, 1);
   assert.equal(payment.listener, null);
+});
+
+test('overlapping refreshes apply only the newest request and discard obsolete errors', async () => {
+  const requests = [];
+  const payment = new Payment(data, { _getPaymentData: () => new Promise((resolve, reject) => requests.push({ resolve, reject })) });
+  const first = payment.refresh();
+  const second = payment.refresh();
+  const newest = payment.refresh();
+  requests[2].resolve({ ...data, metadata: { version: 'new' } });
+  await newest;
+  requests[1].resolve({ ...data, metadata: { version: 'old' } });
+  requests[0].reject(Object.assign(new Error('Obsolete auth error'), { status: 403 }));
+  assert.equal(await first, payment);
+  assert.equal(await second, payment);
+  assert.deepEqual(payment.metadata, { version: 'new' });
+});
+
+test('refresh and polling preserve terminal states and proof fields on later pending responses', async t => {
+  for (const status of ['completed', 'cancelled', 'expired']) {
+    const payment = new Payment({ ...data, status, txHash: 'chain-tx', confirmedAt: 1000 }, { _getPaymentData: async () => data });
+    t.after(() => payment.stopListening());
+    const events = [];
+    payment.on('status_change', value => events.push(value));
+    await payment.refresh();
+    payment.startListening();
+    assert.equal(payment.status, status);
+    assert.equal(payment.txHash, 'chain-tx');
+    assert.equal(payment.confirmedAt.getTime(), 1000);
+    assert.equal(payment._listening, false);
+    assert.deepEqual(events, []);
+  }
 });
 
 test('authentication failure stops polling and reports the server error', async () => {

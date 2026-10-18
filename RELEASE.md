@@ -6,7 +6,8 @@ The package uses the Skyzai merchant API-key contract approved by the overseer o
 
 ## Local release gate
 
-Run from the reviewed SDK checkout with Node.js 18+ (verified locally on Node.js 22).
+Run the complete release gate from the reviewed SDK checkout with Node.js 22.12+ (verified locally on Node.js 22.23.3).
+The SDK itself supports Node.js 18+; the dashboard's Vite dependencies require the newer release-gate runtime.
 Point `SKYZAI_APP_ROOT` at the server checkout containing the reviewed expiry and JWT-secret-binding fixes.
 That checkout needs its functions dependencies installed.
 
