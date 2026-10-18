@@ -115,10 +115,11 @@ export async function startSkyzaiServer() {
 }
 
 export function transfer(paymentId, amount = 10_123_456, overrides = {}) {
+  const now = Date.now();
   return {
     result: 'SUCCESS',
     memo_base64: Buffer.from(`Payment: ${paymentId}`).toString('base64'),
-    consensus_timestamp: (Date.now() / 1000).toFixed(9),
+    consensus_timestamp: `${Math.floor(now / 1000)}.${String(now % 1000).padStart(3, '0')}000000`,
     token_transfers: [
       { token_id: '0.0.456858', account: '0.0.9000', amount },
       { token_id: '0.0.456858', account: '0.0.7001', amount: -amount },

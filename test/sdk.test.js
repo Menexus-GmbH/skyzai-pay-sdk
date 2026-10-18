@@ -136,7 +136,7 @@ test('expiry grace performs a final get, reports server status, and stops withou
 });
 
 test('expiry final request can report completion; an expired handler response stops immediately', async () => {
-  for (const status of ['completed', 'expired']) {
+  for (const status of ['completed', 'expired', 'failed']) {
     const payment = new Payment({ ...data, expiresAt: 1 }, {
       expiryGrace: 0,
       _getPaymentData: async () => ({ ...data, status, expiresAt: 1 }),

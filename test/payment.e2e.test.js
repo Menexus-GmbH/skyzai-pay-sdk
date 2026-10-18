@@ -101,17 +101,14 @@ test('real completion rejects underpayment, wrong token, wrong memo, failed and 
   await assert.rejects(server.complete(buyerRequest(payment.id)), { code: 'not-found' });
 });
 
-test('server expired and failed states stop monitoring without emitting success', async t => {
+test('server expired state stops monitoring without emitting success', async t => {
   const { server, sdk } = await setup(t);
-  for (const status of ['expired', 'failed']) {
-    const payment = await sdk.payments.create({ amount: '1', currency: 'USDC' });
-    t.after(() => payment.stopListening());
-    payment.on('confirmed', () => assert.fail('Unpaid request must not confirm'));
-    const terminal = once(payment, status, { signal: AbortSignal.timeout(3000) });
-    payment.startListening();
-    // A stored server state is separate from the expiry enforcement release gate.
-    server.db.docs.get(`transactions/${payment.id}`).status = status;
-    await terminal;
-    assert.equal(payment._listening, false);
-  }
+  const payment = await sdk.payments.create({ amount: '1', currency: 'USDC' });
+  t.after(() => payment.stopListening());
+  payment.on('confirmed', () => assert.fail('Unpaid request must not confirm'));
+  const expired = once(payment, 'expired', { signal: AbortSignal.timeout(3000) });
+  payment.startListening();
+  server.db.docs.get(`transactions/${payment.id}`).status = 'expired';
+  await expired;
+  assert.equal(payment._listening, false);
 });
