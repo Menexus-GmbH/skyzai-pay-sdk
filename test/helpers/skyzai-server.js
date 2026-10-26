@@ -1,3 +1,4 @@
+// Runs current Skyzai handlers with owner-issued fixture keys and local transfer evidence only.
 import { readFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
@@ -54,7 +55,7 @@ export async function startSkyzaiServer() {
       };
       if (name === 'firebase-admin/firestore') return { FieldValue: { serverTimestamp: now } };
       if (name === 'jsonwebtoken') return jwt;
-      if (name === 'node:crypto') return requireServer(name);
+      if (name === 'node:crypto' || name === 'node:util') return requireServer(name);
       throw new Error(`Unfaked external dependency: ${name} in ${file}`);
     };
     const localConsole = { log: (...args) => logs.push(args), error: (...args) => logs.push(args), warn: (...args) => logs.push(args) };
@@ -65,17 +66,16 @@ export async function startSkyzaiServer() {
   }
   const { FakeDb } = load(`${root}/test/firestoreFake.ts`);
   db = new FakeDb();
-  db.docs.set('Users/merchant', { uId: 'merchant', userEmail: 'merchant@example.invalid', userName: 'Local merchant', walletAddress: '0.0.9000', accountAddress: '0.0.9000', kybStatus: 'approved', admins: [{ uId: 'admin-user', status: 'accepted' }] });
-  db.docs.set('Users/admin-user', { administration: ['merchant'] });
+  db.docs.set('Users/merchant', { uId: 'merchant', userType: 'business', owner: 'owner-user', userEmail: 'merchant@example.invalid', userName: 'Local merchant', walletAddress: '0.0.9000', accountAddress: '0.0.9000', kybStatus: 'approved' });
   const { createGenerateAPIKeyHandler } = load(`${root}/src/admin/generateAPIKey.ts`);
-  const generateKey = createGenerateAPIKeyHandler({ db: () => db, verifyIdToken: async () => ({ uid: 'admin-user' }) });
+  const generateKey = createGenerateAPIKeyHandler({ db: () => db, verifyIdToken: async () => ({ uid: 'owner-user' }) });
   let generated;
   let keyStatus;
   const keyResponse = {
     set() { return this; }, status(value) { keyStatus = value; return this; },
     json(value) { generated = value; },
   };
-  await generateKey({ method: 'POST', headers: { authorization: 'Bearer local-admin-session' }, body: { businessId: 'merchant' } }, keyResponse);
+  await generateKey({ method: 'POST', headers: { authorization: 'Bearer local-owner-session' }, body: { businessId: 'merchant' } }, keyResponse);
   if (keyStatus !== 200) throw new Error(`generateAPIKey failed: ${JSON.stringify(generated)}`);
   const apiKey = generated.apiKey;
   const keyId = jwt.decode(apiKey).keyId;
@@ -117,6 +117,7 @@ export async function startSkyzaiServer() {
 export function transfer(paymentId, amount = 10_123_456, overrides = {}) {
   const now = Date.now();
   return {
+    transaction_id: '0.0.7001-1700000000-111111111',
     result: 'SUCCESS',
     memo_base64: Buffer.from(`Payment: ${paymentId}`).toString('base64'),
     consensus_timestamp: `${Math.floor(now / 1000)}.${String(now % 1000).padStart(3, '0')}000000`,

@@ -1,3 +1,4 @@
+// Exercises merchant SDK requests against current local server handlers without cloud access.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
@@ -46,6 +47,7 @@ for (const [older, newer] of [['refresh', 'poll'], ['poll', 'refresh'], ['refres
     const staleRefresh = older === 'refresh' ? payment.refresh() : payment.startListening();
     assert.equal((await captured).status, 'pending');
     server.setMirror([transfer(payment.id)]);
+    server.setNow(Date.now());
     const result = await server.complete(buyerRequest(payment.id));
     assert.equal(result.status, 'completed');
     if (newer === 'refresh') await payment.refresh();
@@ -71,7 +73,7 @@ for (const [older, newer] of [['refresh', 'poll'], ['poll', 'refresh'], ['refres
 
 test('real key generation -> SDK create/get/monitor -> buyer completion -> SDK completed', async t => {
   const { server, sdk } = await setup(t);
-  assert.equal(server.db.docs.get(`APIKeys/${server.keyId}`).generatedBy, 'admin-user');
+  assert.equal(server.db.docs.get(`APIKeys/${server.keyId}`).generatedBy, 'owner-user');
   const payment = await sdk.payments.create({ amount: '10.123456', currency: 'USDC', metadata: { orderId: 'order-1' } });
   t.after(() => payment.stopListening());
   assert.equal(payment.status, 'pending');
@@ -92,6 +94,7 @@ test('real key generation -> SDK create/get/monitor -> buyer completion -> SDK c
   const completed = once(payment, 'completed', { signal: AbortSignal.timeout(3000) });
   payment.startListening();
   server.setMirror([transfer(payment.id)]);
+  server.setNow(Date.now());
   const result = await server.complete(buyerRequest(payment.id));
   assert.equal(result.status, 'completed');
   await completed;
@@ -147,6 +150,7 @@ test('real completion rejects underpayment, wrong token, wrong memo, failed and 
     transfer(payment.id, 10_123_456, { token_transfers: [{ token_id: '0.0.1', account: '0.0.9000', amount: 10_123_456 }] }),
     transfer('another-payment'),
     transfer(payment.id, 10_123_456, { result: 'FAIL_INVALID' }),
+    transfer(payment.id, 10_123_456, { transaction_id: undefined }),
   ]) {
     server.setMirror([tx]);
     await assert.rejects(server.complete(buyerRequest(payment.id)), { code: 'failed-precondition' });

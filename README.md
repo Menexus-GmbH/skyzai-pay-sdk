@@ -163,7 +163,9 @@ SKYZAI_APP_ROOT=/path/to/skyzai_app npm run test:server-requirements
 The Skyzai checkout must have its `functions/node_modules` installed, including TypeScript and jsonwebtoken.
 The harness transpiles the actual server source in memory and runs the SDK through a loopback HTTP server.
 It executes real `createGenerateAPIKeyHandler`, `validateJWT`, `createPayment`, `getPayment`, `cancelPayment`, `createCompleteSkyzaiPaymentHandler`, token resolution, transfer evaluation, and payment-summary logic.
-It uses the server's `FakeDb`, local fixture signing material, a fake admin identity verifier, Firebase wrapper shims, and fake mirror responses.
+It uses the server's `FakeDb`, local fixture signing material, a fake business-owner identity verifier, Firebase wrapper shims, and fake mirror responses with verified transaction IDs.
+The merchant fixture is a KYB-approved business with an explicit owner, matching the hardened key-generation and per-request business checks.
+Completion tests use a fixed injected clock when comparing receipt timestamps and reject mirror evidence without a transaction ID.
 Unexpected external imports and outbound server fetches fail closed.
 No cloud SDK, credentials, real blockchain transfer, or mirror request is used.
 
