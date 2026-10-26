@@ -81,6 +81,9 @@ const cancelled = await skyzai.payments.cancel('payment-id');
 `Payment` exposes `id`/`paymentId`, `status`, `amount`, `currency`, `userId`, `userEmail`, `userName`, `metadata`, `destinations`, `txHash`, `qrCode`, and `deepLink`.
 `createdAt`, `expiresAt`, `confirmedAt`, and `updatedAt` are `Date` values when returned by the server, otherwise `null`.
 The creation response contains fewer fields than the get response; call `refresh()` for the full record.
+In particular, creation omits merchant identity, metadata, `createdAt`, and `updatedAt`; the SDK exposes `null` for the missing identity/dates and `{}` for metadata until a get or refresh.
+The server still stores the metadata supplied at creation.
+Get returns `userId` and cancel returns `uId`; both become `Payment.userId`.
 Merchant create/get/cancel responses omit `network`, `tokenId`, and `tokenDecimals`; retain the requested network in your checkout records rather than inferring it from the QR link.
 
 `startListening()` polls authenticated `getPayment` requests every three seconds by default.
@@ -94,7 +97,8 @@ The server stores these requests in `transactions`.
 | `status_change` | Server status changed; argument is the status string |
 | `completed` | Server verified settlement; argument is the updated `Payment` |
 | `confirmed` | Compatibility success callback, also emitted for `completed` |
-| `expired`, `failed`, `cancelled` | Server result that stops monitoring; argument is the updated `Payment` |
+| `expired`, `cancelled` | Server result that stops monitoring; argument is the updated `Payment` |
+| `failed` | Compatibility terminal event; the current merchant server does not return this status |
 | `error` | HTTP, authentication, or transport failure; argument is an `Error` |
 | `monitoring_stopped` | Expiry grace elapsed; argument is the `Payment` with the last server status |
 
@@ -104,6 +108,21 @@ Completed, confirmed, expired, failed, and cancelled results stop polling automa
 Authentication, access, and missing-payment errors also stop polling; transient errors are reported and retried on the next interval.
 Calling `startListening()` repeatedly does not create duplicate polling loops.
 `stopListening()` suppresses an in-flight poll's result and prevents further polling.
+
+The current merchant HTTP status values are:
+
+| `Payment.status` | Meaning |
+| --- | --- |
+| `pending` | Awaiting settlement within the payment window |
+| `completed` | Verified settlement; emits `completed` and compatibility `confirmed` |
+| `confirmed` | Legacy server success value; emits `confirmed` |
+| `expired` | Payment window elapsed, or an explicitly stored expired state |
+| `cancelled` | Invoice withdrawn; no refund implied |
+| `unknown` | Stored status is missing or unrecognized; no success or failure event |
+
+The server maps unrecognized stored values, including `failed`, to `unknown`.
+The SDK preserves `unknown` on a newly fetched or pending object and can continue polling until the monitoring deadline; it does not authorize fulfillment or a replacement transfer.
+Retain the invoice ID and contact Skyzai support if the status remains unknown.
 
 `isExpired()` checks the server's `expiresAt` against the local clock for a pending request, or returns true for server status `expired`.
 It does not invent a server status or confirm a payment.
@@ -132,6 +151,8 @@ if (payment.status === 'completed') console.log(payment.txHash);
 `payments.cancel(id)` withdraws a stored pending invoice, including one currently displayed as expired, and returns a separate `Payment` object.
 Refresh an existing object to observe its cancellation.
 Completed, confirmed, and already cancelled invoices cannot be cancelled.
+Cancellation accepts only a stored `pending` state; a persisted `expired`, `unknown`, or unrecognized state is also refused with HTTP 400 and `HTTP_ERROR`.
+This differs from the derived expired view of a still-pending record described above.
 Cancellation does not reverse a transfer.
 Verified late, cancelled, duplicate, or already claimed deposits can create private server recovery evidence for operator review without completing the invoice or executing a refund.
 The buyer completion callable reports that review outcome; merchant get/cancel responses expose no recovery records or review status, so SDK HTTP error codes cannot identify it.
@@ -237,6 +258,7 @@ The merchant fixture is a KYB-approved business with an explicit owner, matching
 Completion tests use a fixed injected clock when comparing receipt timestamps and reject mirror evidence without a transaction ID.
 Lifecycle regressions cover delayed completion after an SDK expiry event, consensus exactly at expiry, cancellation of elapsed invoices, and private review evidence retained once across repeated reports.
 Network regressions cover production and unidentified-project testnet refusal without an invoice, local testnet USDC/USD settlement, and configured or missing USDT on both networks.
+Contract regressions cover create/get/cancel methods and payloads, partial creation data, identity/date normalization, all current statuses, unknown stored values, and cancellation refusals that preserve the invoice.
 Unexpected external imports and outbound server fetches fail closed.
 No cloud SDK, credentials, real blockchain transfer, or mirror request is used.
 

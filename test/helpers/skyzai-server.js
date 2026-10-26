@@ -94,7 +94,7 @@ export async function startSkyzaiServer({ projectId = 'demo-skyzai' } = {}) {
       for await (const chunk of req) chunks.push(chunk);
       req.body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
       req.query = Object.fromEntries(url.searchParams);
-      calls.push({ path: url.pathname, method: req.method, body: req.body });
+      calls.push({ path: url.pathname, method: req.method, query: req.query, body: req.body });
       res.set = (name, value) => { res.setHeader(name, value); return res; };
       res.status = status => { res.statusCode = status; return res; };
       res.json = data => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(data)); };

@@ -15,6 +15,89 @@ function buyerRequest(id) {
   return { auth: { uid: 'buyer', token: { firebase: { sign_in_provider: 'password' } } }, data: { transactionId: id, onChainTransactionId: CHAIN_TX } };
 }
 
+test('merchant create/get/cancel shapes retain checkout data and normalize response fields', async t => {
+  const { server, sdk } = await setup(t);
+  const request = { amount: '1.250000', currency: 'USD', network: 'mainnet', metadata: { orderId: 'shape-order', items: 2 } };
+  const payment = await sdk.payments.create(request);
+  assert.deepEqual(server.calls[0], { path: '/createPayment', method: 'POST', query: {}, body: request });
+  assert.equal(payment.paymentId, payment.id);
+  assert.equal(payment.amount, request.amount);
+  assert.equal(payment.currency, request.currency);
+  assert.equal(payment.getQRCode(), `skyzai://pay?id=${payment.id}`);
+  assert.equal(payment.getDeepLink(), payment.getQRCode());
+  for (const field of ['userId', 'userName', 'userEmail', 'createdAt', 'confirmedAt', 'updatedAt', 'txHash']) {
+    assert.equal(payment[field], null, `${field} is absent or null at creation`);
+  }
+  assert.deepEqual(payment.metadata, {});
+  const stored = server.db.docs.get(`transactions/${payment.id}`);
+  assert.deepEqual(stored.metadata, request.metadata);
+  assert.deepEqual(payment.destinations, stored.destinations);
+  assert.equal(payment.expiresAt.getTime(), stored.expiresAt);
+
+  assert.equal(await payment.refresh(), payment);
+  assert.deepEqual(server.calls[1], { path: '/getPayment', method: 'GET', query: { id: payment.id }, body: {} });
+  assert.deepEqual(payment.metadata, request.metadata);
+  assert.equal(payment.userId, 'merchant');
+  assert.equal(payment.userEmail, 'merchant@example.invalid');
+  assert.equal(payment.userName, 'Local merchant');
+  for (const field of ['createdAt', 'expiresAt', 'updatedAt']) assert.equal(payment[field].getTime(), stored[field]);
+
+  const cancelled = await sdk.payments.cancel(payment.id);
+  assert.deepEqual(server.calls[2], { path: '/cancelPayment', method: 'POST', query: {}, body: { paymentId: payment.id } });
+  assert.notEqual(cancelled, payment);
+  assert.equal(cancelled.id, payment.id);
+  assert.equal(cancelled.userId, payment.userId); // get returns userId; cancel returns uId.
+  for (const field of ['amount', 'currency', 'userName', 'userEmail', 'metadata', 'destinations', 'qrCode', 'deepLink', 'createdAt', 'expiresAt', 'txHash', 'confirmedAt']) {
+    assert.deepEqual(cancelled[field], payment[field], `${field} survives cancellation`);
+  }
+  assert.equal(cancelled.status, 'cancelled');
+  assert.equal(cancelled.updatedAt.getTime(), server.db.docs.get(`transactions/${payment.id}`).updatedAt);
+  assert.equal(payment.status, 'pending');
+  await payment.refresh();
+  assert.equal(payment.status, 'cancelled');
+});
+
+test('merchant status projection and cancellation fail closed for every stored lifecycle value', async t => {
+  const { server, sdk } = await setup(t);
+  for (const [storedStatus, status, refusal] of [
+    ['pending', 'pending', null],
+    ['completed', 'completed', 'Cannot cancel a completed payment'],
+    ['confirmed', 'confirmed', 'Cannot cancel a confirmed payment'],
+    ['cancelled', 'cancelled', 'Payment is already cancelled'],
+    ['expired', 'expired', 'Cannot cancel a payment with an unknown status'],
+    ['unknown', 'unknown', 'Cannot cancel a payment with an unknown status'],
+    ['failed', 'unknown', 'Cannot cancel a payment with an unknown status'],
+    ['future-status', 'unknown', 'Cannot cancel a payment with an unknown status'],
+    [null, 'unknown', 'Cannot cancel a payment with an unknown status'],
+    [undefined, 'unknown', 'Cannot cancel a payment with an unknown status'],
+  ]) {
+    await t.test(String(storedStatus), async () => {
+      const created = await sdk.payments.create({ amount: '1', currency: 'USDC' });
+      const path = `transactions/${created.id}`;
+      server.db.docs.get(path).status = storedStatus;
+      const before = structuredClone(server.db.docs.get(path));
+      const payment = await sdk.payments.get(created.id);
+      t.after(() => payment.stopListening());
+      assert.equal(payment.status, status);
+      const events = [];
+      for (const event of ['completed', 'confirmed', 'expired', 'cancelled', 'failed']) payment.on(event, () => events.push(event));
+      await payment.refresh();
+      const expectedEvents = ['completed', 'confirmed', 'expired', 'cancelled'].includes(status) ? [status] : [];
+      if (status === 'completed') expectedEvents.push('confirmed');
+      assert.deepEqual(events, expectedEvents);
+      assert.deepEqual(server.db.docs.get(path), before, 'reads must not rewrite the stored status');
+      if (refusal) {
+        await assert.rejects(sdk.payments.cancel(created.id), {
+          name: 'SkyzaiPayError', status: 400, code: 'HTTP_ERROR', message: `Skyzai Pay: ${refusal}`,
+        });
+        assert.deepEqual(server.db.docs.get(path), before, 'refused cancellation must preserve the invoice');
+      } else {
+        assert.equal((await sdk.payments.cancel(created.id)).status, 'cancelled');
+      }
+    });
+  }
+});
+
 for (const [older, newer] of [['refresh', 'poll'], ['poll', 'refresh'], ['refresh', 'refresh']]) {
   test(`delayed ${older} cannot overwrite real buyer completion observed by ${newer}`, async t => {
     const { server, sdk } = await setup(t);

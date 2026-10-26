@@ -28,6 +28,8 @@ Use `payment.refresh()` on an existing SDK object or `terminal.payments.get(paym
 Cancellation withdraws the request but does not reverse a transfer or issue a refund.
 Late or cancelled deposits may require Skyzai operator review, which is not exposed by merchant get/cancel responses.
 See the [expiry and delayed-settlement contract](../../README.md#expiry-cancellation-and-delayed-settlement).
+An `unknown` status is neither a receipt nor a retry instruction; retain the invoice ID for support and avoid another transfer while its outcome is unresolved.
+The current server maps unrecognized stored statuses, including `failed`, to `unknown`, so the demo's compatibility `failed` listener does not identify those records.
 
 Integrations can use the exported error type before starting their own monitoring:
 
