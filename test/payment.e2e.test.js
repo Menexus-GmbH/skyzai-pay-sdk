@@ -216,3 +216,93 @@ test('server expired state stops monitoring without emitting success', async t =
   await expired;
   assert.equal(payment._listening, false);
 });
+
+test('an expired SDK snapshot can refresh to completed when timely proof arrives later', async t => {
+  const { server, sdk } = await setup(t);
+  const payment = await sdk.payments.create({ amount: '10.123456', currency: 'USDC' });
+  t.after(() => payment.stopListening());
+  const now = Date.now();
+  const stored = server.db.docs.get(`transactions/${payment.id}`);
+  stored.createdAt = now - 901_000;
+  stored.expiresAt = Math.floor((now - 1000) / 1000) * 1000;
+  const statuses = [];
+  let confirmations = 0;
+  payment.on('status_change', status => statuses.push(status));
+  payment.on('confirmed', () => { confirmations++; });
+  const expired = once(payment, 'expired', { signal: AbortSignal.timeout(3000) });
+  payment.startListening();
+  await expired;
+  assert.equal(payment.isExpired(), true);
+  assert.equal(payment._listening, false);
+  assert.equal(payment.listener, null);
+  assert.equal(confirmations, 0);
+  assert.equal(stored.status, 'pending');
+
+  // Consensus just before expiry remains eligible regardless of confirmation arrival time.
+  server.setMirror([transfer(payment.id, 10_123_456, {
+    consensus_timestamp: `${Math.floor(stored.expiresAt / 1000) - 1}.999999999`,
+  })]);
+  server.setNow(now + 86_400_000);
+  const result = await server.complete(buyerRequest(payment.id));
+  await payment.refresh();
+  assert.equal(payment.status, 'completed');
+  assert.equal(payment.isExpired(), false);
+  assert.equal(payment.txHash, CHAIN_TX);
+  assert.equal(payment.confirmedAt.getTime(), Date.parse(result.confirmedAt));
+  await payment.refresh();
+  payment.startListening();
+  assert.deepEqual(statuses, ['expired', 'completed']);
+  assert.equal(confirmations, 1);
+  assert.equal(payment._listening, false);
+  assert.equal((await sdk.payments.get(payment.id)).status, 'completed');
+  await assert.rejects(sdk.payments.cancel(payment.id), /Cannot cancel a completed payment/);
+});
+
+for (const cancel of [false, true]) {
+  test(`${cancel ? 'cancelling an elapsed invoice' : 'consensus exactly at expiry'} retains private review evidence without SDK success`, async t => {
+    const { server, sdk } = await setup(t);
+    const payment = await sdk.payments.create({ amount: '10.123456', currency: 'USDC' });
+    t.after(() => payment.stopListening());
+    const now = Date.now();
+    const stored = server.db.docs.get(`transactions/${payment.id}`);
+    stored.createdAt = now - 901_000;
+    stored.expiresAt = Math.floor((now - 1000) / 1000) * 1000;
+    await payment.refresh();
+    assert.equal(payment.status, 'expired');
+    assert.equal(stored.status, 'pending');
+    if (cancel) {
+      const cancelled = await sdk.payments.cancel(payment.id);
+      assert.equal(cancelled.status, 'cancelled');
+      assert.equal(cancelled.userId, 'merchant');
+      await payment.refresh();
+      assert.equal(payment.status, 'cancelled');
+    }
+    let confirmations = 0;
+    payment.on('confirmed', () => { confirmations++; });
+    server.setMirror([transfer(payment.id, 10_123_456, {
+      consensus_timestamp: `${stored.expiresAt / 1000 - (cancel ? 1 : 0)}.000000000`,
+    })]);
+    server.setNow(now);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await assert.rejects(server.complete(buyerRequest(payment.id)), {
+        code: 'failed-precondition', details: { recoveryStatus: 'refund_review' },
+      });
+    }
+    await payment.refresh();
+    const expectedStatus = cancel ? 'cancelled' : 'expired';
+    assert.equal(payment.status, expectedStatus);
+    assert.equal(payment.txHash, null);
+    assert.equal(payment.confirmedAt, null);
+    assert.equal(confirmations, 0);
+    const fetched = await sdk._getPaymentData(payment.id);
+    assert.equal(fetched.status, expectedStatus);
+    assert.equal(fetched.paymentRecoveries, undefined);
+    assert.equal(fetched.recoveryStatus, undefined);
+    const recoveries = [...server.db.docs].filter(([path]) => path.startsWith(`transactions/${payment.id}/paymentRecoveries/`));
+    assert.equal(recoveries.length, 1);
+    assert.equal(recoveries[0][1].status, 'refund_review');
+    assert.equal(recoveries[0][1].reason, cancel ? 'payment_cancelled' : 'outside_payment_window');
+    assert.equal(server.db.docs.has('Users/merchant/meta/paymentSummary'), false);
+    assert.equal(server.db.docs.get(`usedHederaTransferIds/${CHAIN_TX}`).claimedBy, payment.id);
+  });
+}

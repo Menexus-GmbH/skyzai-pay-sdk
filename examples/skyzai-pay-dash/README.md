@@ -18,6 +18,13 @@ Replace a rotated or revoked key in Settings with the current owner-issued key.
 Business approval and flag refusals require resolving eligibility through Skyzai; replacing the key alone does not resolve them.
 Neither refusal means the invoice was cancelled or paid.
 
+An expired invoice can still complete when the buyer reports a transfer made before expiry.
+The demo stops monitoring on expiry and has no saved-invoice recovery screen; retain the payment ID and recheck it through your merchant integration before starting another charge.
+Use `payment.refresh()` on an existing SDK object or `terminal.payments.get(paymentId)` to retrieve the latest result.
+Cancellation withdraws the request but does not reverse a transfer or issue a refund.
+Late or cancelled deposits may require Skyzai operator review, which is not exposed by merchant get/cancel responses.
+See the [expiry and delayed-settlement contract](../../README.md#expiry-cancellation-and-delayed-settlement).
+
 Integrations can use the exported error type before starting their own monitoring:
 
 ```js

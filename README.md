@@ -89,13 +89,13 @@ The server stores these requests in `transactions`.
 | `status_change` | Server status changed; argument is the status string |
 | `completed` | Server verified settlement; argument is the updated `Payment` |
 | `confirmed` | Compatibility success callback, also emitted for `completed` |
-| `expired`, `failed`, `cancelled` | Terminal server state; argument is the updated `Payment` |
+| `expired`, `failed`, `cancelled` | Server result that stops monitoring; argument is the updated `Payment` |
 | `error` | HTTP, authentication, or transport failure; argument is an `Error` |
 | `monitoring_stopped` | Expiry grace elapsed; argument is the `Payment` with the last server status |
 
 Subscribe to either `completed` or `confirmed` for fulfillment, so you do not handle success twice.
 Always attach an `error` listener before starting monitoring.
-Terminal states stop polling automatically.
+Completed, confirmed, expired, failed, and cancelled results stop polling automatically.
 Authentication, access, and missing-payment errors also stop polling; transient errors are reported and retried on the next interval.
 Calling `startListening()` repeatedly does not create duplicate polling loops.
 `stopListening()` suppresses an in-flight poll's result and prevents further polling.
@@ -106,6 +106,31 @@ At `expiresAt + expiryGrace` (two minutes by default), monitoring makes one fina
 In that case `monitoring_stopped` reports the final server status without fabricating `expired` or success.
 If the final request fails, `error` is emitted and `monitoring_stopped` carries the last known status.
 The backend enforces settlement expiry separately; see the server release gate below.
+
+### Expiry, cancellation, and delayed settlement
+
+Merchant invoices have a server-owned 15-minute payment window.
+`getPayment` derives `expired` when that window elapses while the stored invoice remains pending.
+A verified transfer with consensus time in `[createdAt, expiresAt)` can still complete that invoice when reported later, including after the SDK has emitted `expired` and stopped polling.
+A transfer exactly at `expiresAt` is outside the window.
+
+`startListening()` on an expired snapshot does not fetch again.
+Keep the original payment ID and use `payment.refresh()` or `payments.get(id)` to check for delayed completion before requesting another payment.
+Refreshing the same object from `expired` to `completed` emits `status_change`, `completed`, and the compatibility `confirmed` event with the verified receipt.
+
+```js
+// Recheck the original invoice after the buyer reports delayed completion.
+await payment.refresh();
+if (payment.status === 'completed') console.log(payment.txHash);
+```
+
+`payments.cancel(id)` withdraws a stored pending invoice, including one currently displayed as expired, and returns a separate `Payment` object.
+Refresh an existing object to observe its cancellation.
+Completed, confirmed, and already cancelled invoices cannot be cancelled.
+Cancellation does not reverse a transfer.
+Verified late, cancelled, duplicate, or already claimed deposits can create private server recovery evidence for operator review without completing the invoice or executing a refund.
+The buyer completion callable reports that review outcome; merchant get/cancel responses expose no recovery records or review status, so SDK HTTP error codes cannot identify it.
+Retain the original invoice and proof for Skyzai support rather than sending another transfer to resolve an uncertain outcome.
 
 ### Buyer completion boundary
 
@@ -203,6 +228,7 @@ It executes real `createGenerateAPIKeyHandler`, `validateJWT`, `createPayment`, 
 It uses the server's `FakeDb`, local fixture signing material, a fake business-owner identity verifier, Firebase wrapper shims, and fake mirror responses with verified transaction IDs.
 The merchant fixture is a KYB-approved business with an explicit owner, matching the hardened key-generation and per-request business checks.
 Completion tests use a fixed injected clock when comparing receipt timestamps and reject mirror evidence without a transaction ID.
+Lifecycle regressions cover delayed completion after an SDK expiry event, consensus exactly at expiry, cancellation of elapsed invoices, and private review evidence retained once across repeated reports.
 Unexpected external imports and outbound server fetches fail closed.
 No cloud SDK, credentials, real blockchain transfer, or mirror request is used.
 
