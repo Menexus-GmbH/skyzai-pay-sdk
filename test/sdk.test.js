@@ -1,9 +1,10 @@
+// Pure-node SDK behavior, HTTP refusal contracts and credential-redaction regressions.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { inspect } from 'node:util';
-import SkyzaiPay, { SkyzaiPay as NamedSkyzaiPay, AureusPay, Payment } from '../src/index.js';
+import SkyzaiPay, { SkyzaiPay as NamedSkyzaiPay, SkyzaiPayError, AureusPay, Payment } from '../src/index.js';
 
 const data = { paymentId: 'pay-1', status: 'pending', amount: '1', currency: 'USDC', expiresAt: Date.now() + 900000, deepLink: 'skyzai://pay?id=pay-1' };
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -63,15 +64,61 @@ test('HTTP errors redact an echoed Authorization value while retaining status', 
   const apiKey = 'fixture-header.fixture-payload.fixture-signature';
   const server = createServer((_req, res) => {
     res.writeHead(401, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: `Invalid Authorization: Bearer ${apiKey}` }));
+    res.end(JSON.stringify({ error: `Invalid Authorization: Bearer ${apiKey}`, code: apiKey, details: { apiKey } }));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
   const sdk = new SkyzaiPay({ apiKey, baseURL: `http://127.0.0.1:${server.address().port}` });
   await assert.rejects(sdk.payments.get('pay-1'), error => {
+    assert.ok(error instanceof SkyzaiPayError);
     assert.equal(error.status, 401);
+    assert.equal(error.code, 'HTTP_ERROR');
     return assertCredentialSafe(error, apiKey.split('.'));
   });
+});
+
+test('JSON HTTP refusals expose stable codes and preserve unknown errors without guessing', async t => {
+  let status;
+  let payload;
+  const server = createServer((_req, res) => {
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(payload));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const sdk = new SkyzaiPay({ apiKey: 'fixture', baseURL: `http://127.0.0.1:${server.address().port}` });
+  for (const [httpStatus, message, code] of [
+    [401, 'Missing or invalid authorization header', 'API_KEY_INVALID'],
+    [401, 'Invalid API key', 'API_KEY_INVALID'],
+    [401, 'API key expired. Please generate a new one.', 'API_KEY_EXPIRED'],
+    [401, 'This API key was issued before revocation support and is no longer valid. Please generate a new API key.', 'API_KEY_REISSUE_REQUIRED'],
+    [403, 'This API key has been revoked. Please generate a new one.', 'API_KEY_REVOKED'],
+    [403, 'Business is not approved to accept payments', 'BUSINESS_NOT_APPROVED'],
+    [403, 'Account is flagged or blocked', 'ACCOUNT_BLOCKED'],
+    [404, 'Business not found', 'BUSINESS_NOT_FOUND'],
+    [403, 'You do not have permission to access this payment', 'HTTP_ERROR'],
+    [404, 'Payment not found', 'HTTP_ERROR'],
+    [400, 'Cannot cancel a completed payment', 'HTTP_ERROR'],
+    [429, 'Rate limit exceeded. Maximum 100 payments per hour.', 'HTTP_ERROR'],
+    [503, 'USDT is not configured', 'HTTP_ERROR'],
+    [403, 'A future merchant refusal', 'HTTP_ERROR'],
+    [500, 'Account is flagged or blocked', 'HTTP_ERROR'],
+  ]) {
+    status = httpStatus;
+    payload = { error: message };
+    await assert.rejects(sdk.payments.get('pay-1'), error => {
+      assert.ok(error instanceof SkyzaiPayError);
+      assert.ok(error instanceof Error);
+      assert.equal(error.name, 'SkyzaiPayError');
+      assert.equal(error.status, status);
+      assert.equal(error.code, code);
+      assert.equal(error.message, `Skyzai Pay: ${message}`);
+      return true;
+    });
+  }
+  status = 502;
+  payload = { message: 'Gateway unavailable' };
+  await assert.rejects(sdk.payments.get('pay-1'), { name: 'SkyzaiPayError', status: 502, code: 'HTTP_ERROR', message: 'Skyzai Pay: Gateway unavailable' });
 });
 
 test('amounts use exact decimal token units and reject rounding or unsafe values', async () => {

@@ -13,6 +13,28 @@ The key is held in memory for the current session and is validated by the server
 This browser example is for a trusted local merchant workstation only.
 For a public storefront, keep merchant credentials on your own server and expose authenticated checkout routes to your frontend.
 
+Checkout displays server refusal messages for revoked keys, lost KYB approval, closure, and account flags.
+Replace a rotated or revoked key in Settings with the current owner-issued key.
+Business approval and flag refusals require resolving eligibility through Skyzai; replacing the key alone does not resolve them.
+Neither refusal means the invoice was cancelled or paid.
+
+Integrations can use the exported error type before starting their own monitoring:
+
+```js
+import { SkyzaiPayError } from 'skyzai-pay';
+
+payment.on('error', error => {
+  if (error instanceof SkyzaiPayError && error.code === 'API_KEY_REVOKED') {
+    console.error('Replace the merchant key in Settings and fetch the payment again.');
+  } else {
+    console.error(error.message);
+  }
+});
+payment.startListening();
+```
+
+See the [SDK error codes](../../README.md#configuration-and-errors) for all refusal reasons and recovery steps.
+
 The demo uses the production Skyzai endpoint by default and can create real payment requests.
 The automated SDK tests instead use loopback HTTP and fake chain/mirror data; they never make real payments.
 

@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import SkyzaiPay from '../src/index.js';
+import SkyzaiPay, { SkyzaiPayError } from '../src/index.js';
 import { startSkyzaiServer, transfer } from './helpers/skyzai-server.js';
 
 const CHAIN_TX = '0.0.7001-1700000000-111111111';
@@ -140,6 +140,51 @@ test('real auth, missing payment, ownership and configured-token errors reach th
   await assert.rejects(sdk.payments.create({ amount: '1', currency: 'USDC' }), error => error.status === 403 && /revoked/.test(error.message));
   const invalid = new SkyzaiPay({ apiKey: 'invalid', baseURL: server.baseURL });
   await assert.rejects(invalid.payments.get(payment.id), error => error.status === 401);
+});
+
+test('merchant re-gating and key invalidation produce typed refusals on every SDK path', async t => {
+  const { server, sdk } = await setup(t);
+  const payment = await sdk.payments.create({ amount: '1', currency: 'USDC' });
+  t.after(() => payment.stopListening());
+  const businessPath = 'Users/merchant';
+  const keyPath = `APIKeys/${server.keyId}`;
+  const controlPath = 'APIKeys/merchant_merchant';
+  const originals = [businessPath, keyPath, controlPath].map(path => [path, { ...server.db.docs.get(path) }]);
+  for (const [label, path, patch, code] of [
+    ['KYB withdrawn', businessPath, { kybStatus: 'pending' }, 'BUSINESS_NOT_APPROVED'],
+    ['business closed', businessPath, { kybRelationshipEndedAt: 1 }, 'BUSINESS_NOT_APPROVED'],
+    ['business type removed', businessPath, { userType: 'personal' }, 'BUSINESS_NOT_APPROVED'],
+    ['account flagged', businessPath, { isFlagged: true }, 'ACCOUNT_BLOCKED'],
+    ['account blocked', businessPath, { autoBlock: true }, 'ACCOUNT_BLOCKED'],
+    ['key revoked', keyPath, { revoked: true }, 'API_KEY_REVOKED'],
+    ['key superseded', controlPath, { activeKeyId: 'replacement-key' }, 'API_KEY_REVOKED'],
+  ]) {
+    await t.test(label, async () => {
+      for (const [originalPath, value] of originals) server.db.docs.set(originalPath, { ...value });
+      server.db.docs.set(path, { ...server.db.docs.get(path), ...patch });
+      const assertRefusal = error => {
+        assert.ok(error instanceof SkyzaiPayError);
+        assert.equal(error.name, 'SkyzaiPayError');
+        assert.equal(error.status, 403);
+        assert.equal(error.code, code);
+        assert.ok(!error.message.includes(server.apiKey));
+        return true;
+      };
+      for (const operation of [
+        () => sdk.payments.create({ amount: '1', currency: 'USDC' }),
+        () => sdk.payments.get(payment.id),
+        () => sdk.payments.cancel(payment.id),
+        () => payment.refresh(),
+      ]) await assert.rejects(operation, assertRefusal);
+      const refused = once(payment, 'error', { signal: AbortSignal.timeout(3000) });
+      payment.startListening();
+      assertRefusal((await refused)[0]);
+      assert.equal(payment._listening, false);
+      assert.equal(payment.listener, null);
+      assert.equal(payment.status, 'pending');
+      assert.equal(server.db.docs.get(`transactions/${payment.id}`).status, 'pending');
+    });
+  }
 });
 
 test('real completion rejects underpayment, wrong token, wrong memo, failed and missing transfers', async t => {

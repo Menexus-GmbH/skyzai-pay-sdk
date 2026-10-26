@@ -1,6 +1,27 @@
+// Merchant HTTP client with credential-safe errors shared by create, get, cancel and polling.
 import Payment from './Payment.js';
 
 const BASE_URL = 'https://us-central1-skyzai-16e1b.cloudfunctions.net';
+// shortcut: HTTP handlers expose messages only; use server codes when the wire contract adds them.
+const REFUSAL_CODES = new Map([
+  ['401:Missing or invalid authorization header', 'API_KEY_INVALID'],
+  ['401:Invalid API key', 'API_KEY_INVALID'],
+  ['401:API key expired. Please generate a new one.', 'API_KEY_EXPIRED'],
+  ['401:This API key was issued before revocation support and is no longer valid. Please generate a new API key.', 'API_KEY_REISSUE_REQUIRED'],
+  ['403:This API key has been revoked. Please generate a new one.', 'API_KEY_REVOKED'],
+  ['403:Business is not approved to accept payments', 'BUSINESS_NOT_APPROVED'],
+  ['403:Account is flagged or blocked', 'ACCOUNT_BLOCKED'],
+  ['404:Business not found', 'BUSINESS_NOT_FOUND'],
+]);
+
+export class SkyzaiPayError extends Error {
+  constructor(message, status, code = 'HTTP_ERROR') {
+    super(`Skyzai Pay: ${message}`);
+    this.name = 'SkyzaiPayError';
+    this.status = status;
+    this.code = code;
+  }
+}
 
 function merchantApiKey(value) {
   if (typeof value !== 'string' || !value.trim() || /[^\x20-\x7e]/.test(value)) {
@@ -72,9 +93,8 @@ class SkyzaiPay {
     }
     if (!response.ok) {
       const message = typeof data?.error === 'string' ? data.error : typeof data?.message === 'string' ? data.message : response.statusText;
-      const error = new Error(`Skyzai Pay: ${message.replaceAll(apiKey, '[redacted]')}`);
-      error.status = response.status;
-      throw error;
+      const code = REFUSAL_CODES.get(`${response.status}:${message}`) ?? 'HTTP_ERROR';
+      throw new SkyzaiPayError(message.replaceAll(apiKey, '[redacted]'), response.status, code);
     }
     if (this.debug) console.log('[Skyzai Pay]', method, path.split('?')[0], response.status);
     return data;

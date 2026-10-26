@@ -13,12 +13,14 @@ This package uses ES modules.
 
 ## Merchant setup
 
-Obtain a merchant API key from Skyzai's `generateAPIKey` flow for a KYB-approved business that you administer.
+The business owner obtains a merchant API key from Skyzai's `generateAPIKey` flow for a KYB-approved business.
+Administrator access alone cannot issue a merchant key.
 The key is an HS256 JWT containing a `keyId` linked to the server's `APIKeys` record.
 The SDK sends it as `Authorization: Bearer <apiKey>` to `createPayment`, `getPayment`, and `cancelPayment`.
 Keys containing control or non-ASCII characters are rejected before any request.
 A Firebase custom token or Firebase ID token cannot replace this merchant key.
 Expired or revoked keys must be replaced through Skyzai.
+Rotation invalidates previous keys; every create, get, and cancel request rechecks the current key, business approval, closure, and account flags.
 
 Keep the key on your merchant server and expose only your own authenticated checkout endpoints to shoppers.
 Do not ship the key in a public web bundle or store it in browser local storage.
@@ -135,7 +137,42 @@ An explicit `baseURL` may select a local HTTP test server on `127.0.0.1` or `[::
 Other remote origins are rejected and HTTP redirects are refused.
 Configure local URLs only from trusted application configuration.
 Debug output contains method, endpoint name, and HTTP status, never the API key.
-HTTP errors expose `error.status` and the server message, including 401 invalid/expired key, 403 revoked key or access denied, 404 missing payment, 429 rate limit, and 503 unconfigured currency.
+JSON HTTP refusals throw the exported `SkyzaiPayError`, an `Error` subclass with `status` (HTTP status), `code` (SDK reason), and a credential-redacted server `message` prefixed with `Skyzai Pay:`.
+The same error reaches `Payment.refresh()` and the polling `error` event.
+Existing `error.status` checks continue to work.
+
+| `error.code` | HTTP status | Recovery |
+| --- | --- | --- |
+| `API_KEY_INVALID` | 401 | Supply a valid Skyzai merchant key |
+| `API_KEY_EXPIRED` | 401 | The business owner must issue a replacement key |
+| `API_KEY_REISSUE_REQUIRED` | 401 | Replace a legacy key issued before revocation support |
+| `API_KEY_REVOKED` | 403 | Use the current key after rotation, or have the owner issue a replacement |
+| `BUSINESS_NOT_APPROVED` | 403 | Resolve KYB approval, business closure, or account-type eligibility through Skyzai |
+| `ACCOUNT_BLOCKED` | 403 | Resolve the business's flag or block through Skyzai |
+| `BUSINESS_NOT_FOUND` | 404 | Verify the business linked to the key through Skyzai |
+| `HTTP_ERROR` | Any non-success status | Inspect `status` and `message`; includes access denial, missing payment, rate limits, unconfigured currency, cancellation refusal, and unknown messages |
+
+The HTTP handlers currently return messages without machine-readable codes, so these SDK reasons match known status/message pairs.
+An unknown or changed message falls back to `HTTP_ERROR`.
+Rotation and explicit revocation share `API_KEY_REVOKED` because the server returns the same refusal for both.
+Local validation, transport, timeout, and malformed-response failures remain plain `Error` values.
+
+```js
+import { SkyzaiPayError } from 'skyzai-pay';
+
+try {
+  await payment.refresh();
+} catch (error) {
+  if (error instanceof SkyzaiPayError && error.code === 'API_KEY_REVOKED') {
+    console.error('Configure the current merchant key, then create a new SDK client.');
+  } else {
+    throw error;
+  }
+}
+```
+
+Polling stops on 400, 401, 403, or 404 without changing the last known payment status.
+After resolving business eligibility or replacing the key, create a new SDK client and fetch the payment again before resuming monitoring.
 The SDK does not automatically retry payment creation.
 
 ## MIGRATION: aureus-pay 2.x to skyzai-pay 3.0
