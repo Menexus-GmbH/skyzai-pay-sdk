@@ -18,6 +18,10 @@ Replace a rotated or revoked key in Settings with the current owner-issued key.
 Business approval and flag refusals require resolving eligibility through Skyzai; replacing the key alone does not resolve them.
 Neither refusal means the invoice was cancelled or paid.
 
+The dashboard creates mainnet USDC invoices only.
+Other merchant integrations can identify production testnet refusal with `TESTNET_NOT_ALLOWED` and missing USDT configuration with `TOKEN_NOT_CONFIGURED`.
+Keep the intended network and currency when resolving these refusals; the SDK does not switch settlement rails automatically.
+
 An expired invoice can still complete when the buyer reports a transfer made before expiry.
 The demo stops monitoring on expiry and has no saved-invoice recovery screen; retain the payment ID and recheck it through your merchant integration before starting another charge.
 Use `payment.refresh()` on an existing SDK object or `terminal.payments.get(paymentId)` to retrieve the latest result.

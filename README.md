@@ -63,8 +63,12 @@ USDC and USD amounts with more than six decimal places, an unsafe integer number
 Use strings to preserve decimals; exponent notation is not accepted.
 
 `currency` accepts `USDC`, `USD` (settled in USDC), or `USDT`.
-USDT requires server-side token configuration and otherwise returns HTTP 503.
-`network` defaults to `mainnet`; `testnet` is refused by the production server.
+USDT requires server-side token configuration for the requested network and otherwise returns HTTP 503 with `TOKEN_NOT_CONFIGURED`.
+The server resolves the token ID and decimals from `appConfig/skyzaiPay.<network>.tokens.<currency>`, with `USD` using the `USDC` entry.
+Without an override, mainnet USDC uses `0.0.456858` and testnet USDC uses `0.0.429274`, both with six decimals.
+`network` defaults to `mainnet`; production and unidentified server environments refuse `testnet` with HTTP 403 and `TESTNET_NOT_ALLOWED`.
+Testnet requests work only against an explicitly identified non-production server, such as the local handler harness.
+The SDK never changes the requested currency or network to retry a refusal.
 The payment API supports Hedera settlement, even if a merchant profile contains EVM addresses.
 `metadata` is an optional object.
 
@@ -77,6 +81,7 @@ const cancelled = await skyzai.payments.cancel('payment-id');
 `Payment` exposes `id`/`paymentId`, `status`, `amount`, `currency`, `userId`, `userEmail`, `userName`, `metadata`, `destinations`, `txHash`, `qrCode`, and `deepLink`.
 `createdAt`, `expiresAt`, `confirmedAt`, and `updatedAt` are `Date` values when returned by the server, otherwise `null`.
 The creation response contains fewer fields than the get response; call `refresh()` for the full record.
+Merchant create/get/cancel responses omit `network`, `tokenId`, and `tokenDecimals`; retain the requested network in your checkout records rather than inferring it from the QR link.
 
 `startListening()` polls authenticated `getPayment` requests every three seconds by default.
 Refresh and polling share request ordering, so an older response cannot overwrite a newer request's result.
@@ -175,7 +180,9 @@ Existing `error.status` checks continue to work.
 | `BUSINESS_NOT_APPROVED` | 403 | Resolve KYB approval, business closure, or account-type eligibility through Skyzai |
 | `ACCOUNT_BLOCKED` | 403 | Resolve the business's flag or block through Skyzai |
 | `BUSINESS_NOT_FOUND` | 404 | Verify the business linked to the key through Skyzai |
-| `HTTP_ERROR` | Any non-success status | Inspect `status` and `message`; includes access denial, missing payment, rate limits, unconfigured currency, cancellation refusal, and unknown messages |
+| `TESTNET_NOT_ALLOWED` | 403 | Use the intended production mainnet checkout, or a known non-production server for testnet testing |
+| `TOKEN_NOT_CONFIGURED` | 503 | Ask the server operator to configure USDT for the requested network before retrying |
+| `HTTP_ERROR` | Any non-success status | Inspect `status` and `message`; includes access denial, missing payment, rate limits, cancellation refusal, and unknown messages |
 
 The HTTP handlers currently return messages without machine-readable codes, so these SDK reasons match known status/message pairs.
 An unknown or changed message falls back to `HTTP_ERROR`.
@@ -229,6 +236,7 @@ It uses the server's `FakeDb`, local fixture signing material, a fake business-o
 The merchant fixture is a KYB-approved business with an explicit owner, matching the hardened key-generation and per-request business checks.
 Completion tests use a fixed injected clock when comparing receipt timestamps and reject mirror evidence without a transaction ID.
 Lifecycle regressions cover delayed completion after an SDK expiry event, consensus exactly at expiry, cancellation of elapsed invoices, and private review evidence retained once across repeated reports.
+Network regressions cover production and unidentified-project testnet refusal without an invoice, local testnet USDC/USD settlement, and configured or missing USDT on both networks.
 Unexpected external imports and outbound server fetches fail closed.
 No cloud SDK, credentials, real blockchain transfer, or mirror request is used.
 

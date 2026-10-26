@@ -6,8 +6,8 @@ import SkyzaiPay, { SkyzaiPayError } from '../src/index.js';
 import { startSkyzaiServer, transfer } from './helpers/skyzai-server.js';
 
 const CHAIN_TX = '0.0.7001-1700000000-111111111';
-async function setup(t) {
-  const server = await startSkyzaiServer();
+async function setup(t, options) {
+  const server = await startSkyzaiServer(options);
   t.after(server.close);
   return { server, sdk: new SkyzaiPay({ apiKey: server.apiKey, baseURL: server.baseURL, pollInterval: 10 }) };
 }
@@ -141,6 +141,60 @@ test('real auth, missing payment, ownership and configured-token errors reach th
   const invalid = new SkyzaiPay({ apiKey: 'invalid', baseURL: server.baseURL });
   await assert.rejects(invalid.payments.get(payment.id), error => error.status === 401);
 });
+
+for (const projectId of ['skyzai-16e1b', null]) {
+  test(`${projectId === null ? 'unknown' : 'production'} project refuses testnet without creating an invoice`, async t => {
+    const { server, sdk } = await setup(t, { projectId });
+    await assert.rejects(sdk.payments.create({ amount: '1', currency: 'USDC', network: 'testnet' }), {
+      name: 'SkyzaiPayError', status: 403, code: 'TESTNET_NOT_ALLOWED',
+    });
+    assert.equal([...server.db.docs.keys()].some(path => path.startsWith('transactions/')), false);
+    const payment = await sdk.payments.create({ amount: '1', currency: 'USDC' });
+    assert.equal((await sdk.payments.get(payment.id)).status, 'pending');
+    assert.equal(server.db.docs.get(`transactions/${payment.id}`).network, 'mainnet');
+  });
+}
+
+test('unconfigured USDT on either network yields a typed refusal without an invoice', async t => {
+  const { server, sdk } = await setup(t);
+  for (const network of ['mainnet', 'testnet']) {
+    await assert.rejects(sdk.payments.create({ amount: '1', currency: 'USDT', network }), {
+      name: 'SkyzaiPayError', status: 503, code: 'TOKEN_NOT_CONFIGURED',
+    });
+  }
+  assert.equal([...server.db.docs.keys()].some(path => path.startsWith('transactions/')), false);
+});
+
+for (const [network, currency, tokenId] of [
+  ['testnet', 'USDC', '0.0.429274'],
+  ['testnet', 'USD', '0.0.429274'],
+  ['mainnet', 'USDT', '0.0.8001'],
+  ['testnet', 'USDT', '0.0.8002'],
+]) {
+  test(`local ${network} ${currency} invoice settles with its server-selected token`, async t => {
+    const { server, sdk } = await setup(t);
+    if (currency === 'USDT') {
+      server.db.docs.set('appConfig/skyzaiPay', { [network]: { tokens: { USDT: { tokenId, decimals: 6 } } } });
+    }
+    const payment = await sdk.payments.create({ amount: '1.25', currency, network });
+    assert.deepEqual(server.calls[0].body, { amount: '1.25', currency, network, metadata: {} });
+    const stored = server.db.docs.get(`transactions/${payment.id}`);
+    assert.equal(stored.network, network);
+    assert.equal(stored.tokenId, tokenId);
+    assert.equal(stored.tokenDecimals, 6);
+    assert.equal(stored.tokenSymbol, currency);
+    const evidence = transfer(payment.id, 1_250_000);
+    server.setMirror([{ ...evidence, token_transfers: evidence.token_transfers.map(item => ({ ...item, token_id: tokenId })) }]);
+    server.setNow(Date.now());
+    assert.equal((await server.complete(buyerRequest(payment.id))).status, 'completed');
+    await payment.refresh();
+    assert.equal(payment.status, 'completed');
+    assert.equal(payment.amount, '1.25');
+    assert.equal(payment.currency, currency);
+    assert.equal(payment.txHash, CHAIN_TX);
+    assert.equal(server.db.docs.get(`usedHederaTransferIds/${CHAIN_TX}`).network, network);
+  });
+}
 
 test('merchant re-gating and key invalidation produce typed refusals on every SDK path', async t => {
   const { server, sdk } = await setup(t);

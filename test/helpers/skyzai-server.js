@@ -1,4 +1,4 @@
-// Runs current Skyzai handlers with owner-issued fixture keys and local transfer evidence only.
+// Runs current Skyzai handlers with fixture project admission, owner keys and local transfer evidence only.
 import { readFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
@@ -6,7 +6,7 @@ import { runInThisContext } from 'node:vm';
 import { createServer } from 'node:http';
 
 // Load the actual TypeScript handlers without initializing any cloud SDK.
-export async function startSkyzaiServer() {
+export async function startSkyzaiServer({ projectId = 'demo-skyzai' } = {}) {
   if (!process.env.SKYZAI_APP_ROOT) throw new Error('Set SKYZAI_APP_ROOT to a local skyzai_app checkout');
   const root = resolve(process.env.SKYZAI_APP_ROOT, 'functions');
   const requireServer = createRequire(resolve(root, 'package.json'));
@@ -60,7 +60,7 @@ export async function startSkyzaiServer() {
     };
     const localConsole = { log: (...args) => logs.push(args), error: (...args) => logs.push(args), warn: (...args) => logs.push(args) };
     runInThisContext(`(function(require,module,exports,console,process){${code}\n})`, { filename: file })(
-      localRequire, module, module.exports, localConsole, { env: { GCLOUD_PROJECT: 'demo-skyzai' } },
+      localRequire, module, module.exports, localConsole, { env: { GCLOUD_PROJECT: projectId } },
     );
     return module.exports;
   }

@@ -1,4 +1,4 @@
-// Merchant HTTP client with credential-safe errors shared by create, get, cancel and polling.
+// Merchant HTTP client with credential-safe key, business, network and token refusal errors.
 import Payment from './Payment.js';
 
 const BASE_URL = 'https://us-central1-skyzai-16e1b.cloudfunctions.net';
@@ -12,6 +12,11 @@ const REFUSAL_CODES = new Map([
   ['403:Business is not approved to accept payments', 'BUSINESS_NOT_APPROVED'],
   ['403:Account is flagged or blocked', 'ACCOUNT_BLOCKED'],
   ['404:Business not found', 'BUSINESS_NOT_FOUND'],
+  ['403:Testnet payments are not available in production', 'TESTNET_NOT_ALLOWED'],
+  ...['mainnet', 'testnet'].map(network => [
+    `503:No Hedera token configured for currency USDT on ${network}. Set appConfig/skyzaiPay.${network}.tokens.USDT first.`,
+    'TOKEN_NOT_CONFIGURED',
+  ]),
 ]);
 
 export class SkyzaiPayError extends Error {
