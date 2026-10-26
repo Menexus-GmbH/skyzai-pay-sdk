@@ -171,6 +171,26 @@ The server checks the mirror transaction's success, destination, token, amount, 
 The merchant observes that result through `getPayment` or polling.
 This SDK neither sends on-chain transfers nor wraps buyer completion.
 
+Before a new transfer, the buyer app requires a memo-capable Ed25519 signing key and rechecks the invoice through a fresh server read.
+That signing key is separate from the merchant API key.
+Unsupported signing keys, cancelled or expired invoices, changed amount/token/network/destination/expiry/metadata, and a changed buyer session prevent a new send.
+These are buyer-app admission failures; merchant create/get/cancel responses do not expose them as `SkyzaiPayError` codes.
+A merchant invoice can remain `pending` after the buyer app refuses a transfer.
+
+If the buyer app retained a transfer attempt or schedule, expiry or cancellation preserves recovery of that original attempt without signing another transfer.
+Creating a schedule or collecting signatures does not prove execution or completion.
+Merchant fulfillment still requires a verified `completed` result (or the legacy `confirmed` success value).
+An uncertain native transfer must be reconciled using its original invoice and proof before another charge; local attempt storage has not been qualified for device power loss.
+
+### Connect credit purchases
+
+Connect credit purchases use a separate intent API and are outside this merchant SDK.
+Their quote contains `intent_id`, `expires_at`, and a `payment` object with `network`, `token_id`, `decimals`, smallest-unit `amount`, `treasury_account`, and the intent ID as `memo`.
+The buyer app preserves that quote, requires the selected network to match, and checks the original deadline before a new send, including after saving its pending-purchase checkpoint.
+Missing or unknown quote network/expiry prevents a new send; recovery of an existing intent remains available without passing new-send admission again.
+The server verifies the original intent's network and transfer time, so reporting a timely payment later can still recover the purchase.
+Merchant `payments.create`, `payments.get`, and `payments.cancel` do not manage Connect intents or translate Connect refusal codes.
+
 ### Configuration and errors
 
 ```js

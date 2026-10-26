@@ -31,6 +31,11 @@ See the [expiry and delayed-settlement contract](../../README.md#expiry-cancella
 An `unknown` status is neither a receipt nor a retry instruction; retain the invoice ID for support and avoid another transfer while its outcome is unresolved.
 The current server maps unrecognized stored statuses, including `failed`, to `unknown`, so the demo's compatibility `failed` listener does not identify those records.
 
+Buyer signing-key and fresh-invoice checks happen in the Skyzai app and do not appear as merchant SDK error codes.
+If the buyer app refuses a new send, this dashboard can still show the invoice as pending.
+A retained schedule must recover its original execution; schedule creation or signatures alone do not authorize a receipt or another charge.
+This dashboard handles merchant invoices only; [Connect credit intents](../../README.md#connect-credit-purchases) have their own network and quote-expiry checks.
+
 Integrations can use the exported error type before starting their own monitoring:
 
 ```js

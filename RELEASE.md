@@ -4,6 +4,54 @@ These are TYPE-THIS instructions for Ramesh.
 No push, publish, repository rename, or cloud operation was performed by the SDK worker.
 The package uses the Skyzai merchant API-key contract approved by the overseer on 2026-10-18.
 
+## server alignment 2026-10-26
+
+Proposed next version: **3.1.0**.
+The new `SkyzaiPayError` export and stable refusal codes add public API while retaining `Error` inheritance, HTTP `status`, existing payment methods, and event behavior, so a minor release is appropriate.
+`package.json` and the lockfile remain at 3.0.0; no version bump or publication was performed.
+The historical 3.0.0 publication recipe below must be updated to the approved version before use.
+
+The source of truth was the local PAYHARD-1026 checkout at `/Users/darkness/.treehouse/skyzai_app-a2503e/13/skyzai_app`, inspected read-only.
+The audit covered all SDK HTTP calls, their shared JWT validator and token resolver, buyer completion/recovery, and the buyer/Connect admission boundaries described in `docs/changes/PAYHARD-1026.md`.
+
+### Mismatches found and fixed
+
+| Gap | Aligned result |
+| --- | --- |
+| Merchant refusals were generic errors without stable recovery reasons. | Exported `SkyzaiPayError` carries `status` and `code` through create/get/cancel, refresh, and polling, with existing credential redaction preserved. |
+| Key rotation/revocation and current business policy were not distinguishable to consumers. | Added `API_KEY_INVALID`, `API_KEY_EXPIRED`, `API_KEY_REISSUE_REQUIRED`, `API_KEY_REVOKED`, `BUSINESS_NOT_APPROVED`, `ACCOUNT_BLOCKED`, and `BUSINESS_NOT_FOUND`; documented owner-only issuance and recovery after KYB withdrawal, closure, flags, and key replacement. |
+| Production testnet and missing-token refusals lacked typed reasons and routing guidance. | Added `TESTNET_NOT_ALLOWED` and `TOKEN_NOT_CONFIGURED`; documented server-owned token selection, USD-to-USDC settlement, testnet admission, and retaining the requested network because merchant responses omit asset/network fields. |
+| The local server harness used administrator-only key issuance and incomplete transfer evidence. | Fixtures now use an approved business owner, verified Mirror transaction IDs, and fixed receipt clocks, so regressions exercise current handlers and reject missing transfer identity. |
+| Expiry guidance omitted delayed timely completion and the strict consensus cutoff. | Documented the server's 15-minute window `[createdAt, expiresAt)`, explicit refresh after an expired snapshot, exact-expiry refusal, and private recovery evidence without an SDK receipt or automatic refund. |
+| Cancellation guidance did not distinguish stored pending from derived expiry. | Documented pending-only cancellation, including an elapsed invoice still stored pending; persisted expired/unknown and completed/confirmed/cancelled states are refused, and cancel returns a separate object without reversing funds. |
+| Response and status guidance could imply a full creation record or a server `failed` outcome. | Documented partial create data, get `userId` versus cancel `uId` normalization, nullable dates, retained metadata after refresh, all six server wire statuses, and unrecognized stored values becoming `unknown` without success/failure events. |
+| Buyer signing-key/fresh-invoice checks and Connect quotes were not explained at the SDK boundary. | README and example guidance now distinguish buyer-app admission from merchant HTTP errors, preserve recovery of original scheduled attempts, and describe Connect's separate network/expiry-bound quote without adding merchant methods or invented refusal codes. |
+
+The existing request contract already matches the server: POST `createPayment` with `{ amount, currency, network, metadata }`, GET `getPayment?id=...`, and POST `cancelPayment` with `{ paymentId }`, all using the merchant Bearer key.
+Real-handler regressions verify these shapes and the existing response normalization; no wire-format change was required.
+The server rechecks current key/business authority on every call, including reads and cancellation.
+An active-key pointer change rejects the previous key even if its row still has `revoked: false`.
+Rotation and explicit revocation share `API_KEY_REVOKED` because their HTTP messages are identical.
+HTTP handlers expose messages rather than machine-readable reason codes; the SDK maps known status/message pairs and uses `HTTP_ERROR` for changed or unknown messages, access denial, missing invoices, cancellation refusals, and rate limits.
+Transport, timeout, malformed-response, and local-validation failures remain plain `Error` values.
+
+### Verified behavior and limits
+
+`npm test` passes **17/17** SDK tests.
+With `SKYZAI_APP_ROOT` set to the checkout above, `npm run test:e2e` passes **38/38** tests and `npm run test:server-requirements` passes **3/3** gates, for **58 passed, 0 failed** in total.
+Coverage includes exact request/response shapes, all status projections, cancellation eligibility, current-business/key refusals on every SDK path, testnet and configured-token settlement, delayed completion after expiry, strict expiry boundaries, and repeat-safe private recovery evidence.
+The release gates also check expiry enforcement and JWT-secret bindings on all three merchant endpoints.
+
+Buyer signing-key/fresh-invoice checks, terminal-schedule recovery controls, and Connect quote admission were inspected in source; the JS harness does not execute the Flutter/native or Connect flows.
+The buyer app requires a memo-capable Ed25519 key for checkout, validates fresh invoice terms before dispatch, and recovers retained attempts instead of sending again after expiry/cancellation.
+Connect preserves its original intent network and deadline for new sends and verifies delayed payment proofs against the original intent; its refusal protocol is separate from merchant `SkyzaiPayError`.
+SDK polling still stops on terminal status or HTTP 400/401/403/404, preserves the last known status on refusal, and permits explicit expired-to-completed refresh when timely settlement is reported later.
+
+These are local in-memory handler checks with fake chain evidence, not deployed-server or funded-release qualification.
+No cloud operation, live Mirror request, on-chain transfer, browser/device handoff, or power-loss recovery check was performed.
+The server report retains funded-release gates for generic native attempt durability, original pre-broadcast ID continuity, provider/device behavior, and historical Connect claim adoption.
+No server files, dependencies, package version, or npm artifacts were changed by this alignment.
+
 ## Local release gate
 
 Run the complete release gate from the reviewed SDK checkout with Node.js 22.12+ (verified locally on Node.js 22.23.3).
