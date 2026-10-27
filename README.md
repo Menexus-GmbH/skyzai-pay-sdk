@@ -59,13 +59,19 @@ payment.startListening();
 `payments.create({ amount, currency, network, metadata })` returns a `Payment`.
 Amounts are decimal strings in whole token units: `'10.123456'` means 10.123456 USDC, or 10,123,456 smallest units.
 The default mainnet USDC token is `0.0.456858` with six decimals, resolved by the server.
-USDC and USD amounts with more than six decimal places, an unsafe integer number of smallest units, or precision loss in the server's numeric conversion are rejected before sending.
+The SDK checks positive decimal syntax and preserves the supplied text.
+Only the server knows the configured token decimals, so `createPayment` must reject nonrepresentable or unsafe smallest-unit amounts before writing an invoice.
+Configured tokens above 18 decimals are refused because the native buyer cannot verify them safely; the server operator must select a supported token configuration.
+With the precision admission fix, `payments.create` rejects these HTTP 400 responses as `AMOUNT_NOT_REPRESENTABLE`.
+This requires the matching server fix before releasing this SDK change; older servers can accept quotes the buyer cannot pay.
 Use strings to preserve decimals; exponent notation is not accepted.
 
 `currency` accepts `USDC`, `USD` (settled in USDC), or `USDT`.
 USDT requires server-side token configuration for the requested network and otherwise returns HTTP 503 with `TOKEN_NOT_CONFIGURED`.
 The server resolves the token ID and decimals from `appConfig/skyzaiPay.<network>.tokens.<currency>`, with `USD` using the `USDC` entry.
 Without an override, mainnet USDC uses `0.0.456858` and testnet USDC uses `0.0.429274`, both with six decimals.
+For example, six-decimal USDT rejects `'1.0000001'`, and two-decimal USDC rejects `'1.001'`.
+Representable trailing zeroes are accepted; the SDK does not assume six decimals for configured assets.
 `network` defaults to `mainnet`; production and unidentified server environments refuse `testnet` with HTTP 403 and `TESTNET_NOT_ALLOWED`.
 Testnet requests work only against an explicitly identified non-production server, such as the local handler harness.
 The SDK never changes the requested currency or network to retry a refusal.
@@ -223,6 +229,7 @@ Existing `error.status` checks continue to work.
 | `BUSINESS_NOT_FOUND` | 404 | Verify the business linked to the key through Skyzai |
 | `TESTNET_NOT_ALLOWED` | 403 | Use the intended production mainnet checkout, or a known non-production server for testnet testing |
 | `TOKEN_NOT_CONFIGURED` | 503 | Ask the server operator to configure USDT for the requested network before retrying |
+| `AMOUNT_NOT_REPRESENTABLE` | 400 | Supply a representable, safe amount; configured tokens above 18 decimals require an operator configuration change; no invoice was created |
 | `HTTP_ERROR` | Any non-success status | Inspect `status` and `message`; includes access denial, missing payment, rate limits, cancellation refusal, and unknown messages |
 
 The HTTP handlers currently return messages without machine-readable codes, so these SDK reasons match known status/message pairs.

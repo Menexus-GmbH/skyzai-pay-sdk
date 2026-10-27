@@ -127,23 +127,34 @@ test('JSON HTTP refusals expose stable codes and preserve unknown errors without
   await assert.rejects(sdk.payments.get('pay-1'), { name: 'SkyzaiPayError', status: 502, code: 'HTTP_ERROR', message: 'Skyzai Pay: Gateway unavailable' });
 });
 
-test('amounts use exact decimal token units and reject rounding or unsafe values', async () => {
+test('amounts retain decimal text and leave configured token precision to the server', async () => {
   const sdk = new SkyzaiPay({ apiKey: 'fixture' });
   const requests = [];
   sdk._request = async (_path, _method, body) => { requests.push(body); return { ...data, ...body }; };
-  for (const amount of ['0', '-1', 'NaN', Infinity, '1e3', '01', '0.0000001', '9007199254.740992', '9007199254.740991', {}, null]) {
+  for (const amount of ['0', '-1', 'NaN', Infinity, '1e3', '01', {}, null, ' 1.23', '1.23 ', '\t1.23']) {
     await assert.rejects(sdk.payments.create({ amount, currency: 'USDC' }), /amount|USDC/);
   }
-  for (const amount of ['0.000001', '10.123456', '9007199254.740990', 1.25]) {
+  for (const amount of ['0.000001', '10.123456', '9007199254.740990', 1.25, '0.00000001']) {
     const payment = await sdk.payments.create({ amount, currency: 'USDC' });
     assert.equal(payment.amount, String(amount));
   }
-  assert.equal(requests.length, 4);
+  assert.equal(requests.length, 5);
   assert.equal(requests[1].amount, '10.123456');
   for (const extra of [{ currency: 'HBAR' }, { network: 'unknown' }, { metadata: [] }]) {
     await assert.rejects(sdk.payments.create({ amount: '1', currency: 'USDC', ...extra }));
   }
   await assert.rejects(sdk.payments.get('../secrets'), /paymentId/);
+});
+
+test('create rejects configured-token precision refusals for every supported currency', async t => {
+  const message = 'Amount cannot be represented safely in configured token units';
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ error: message }), { status: 400 }));
+  const sdk = new SkyzaiPay({ apiKey: 'fixture' });
+  for (const currency of ['USDT', 'USDC', 'USD']) {
+    await assert.rejects(sdk.payments.create({ amount: '1.001', currency }), {
+      name: 'SkyzaiPayError', status: 400, code: 'AMOUNT_NOT_REPRESENTABLE', message: `Skyzai Pay: ${message}`,
+    });
+  }
 });
 
 test('refresh uses its owning client and emits completed/confirmed once with current data', async () => {

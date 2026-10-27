@@ -1,4 +1,5 @@
-// Merchant HTTP client with credential-safe key, business, network and token refusal errors.
+// Merchant create/get/cancel client used by Payment and public exports; fetches authenticated HTTP only.
+// Validates decimal syntax locally and surfaces server-owned token precision and policy refusals.
 import Payment from './Payment.js';
 
 const BASE_URL = 'https://us-central1-skyzai-16e1b.cloudfunctions.net';
@@ -13,6 +14,7 @@ const REFUSAL_CODES = new Map([
   ['403:Account is flagged or blocked', 'ACCOUNT_BLOCKED'],
   ['404:Business not found', 'BUSINESS_NOT_FOUND'],
   ['403:Testnet payments are not available in production', 'TESTNET_NOT_ALLOWED'],
+  ['400:Amount cannot be represented safely in configured token units', 'AMOUNT_NOT_REPRESENTABLE'],
   ...['mainnet', 'testnet'].map(network => [
     `503:No Hedera token configured for currency USDT on ${network}. Set appConfig/skyzaiPay.${network}.tokens.USDT first.`,
     'TOKEN_NOT_CONFIGURED',
@@ -115,16 +117,7 @@ class SkyzaiPay {
     if (amount.length > 100 || !/^(0|[1-9]\d*)(\.\d+)?$/.test(amount) || !(Number(amount) > 0) || !Number.isFinite(Number(amount))) {
       throw new Error('Skyzai Pay: amount must be a positive decimal in whole token units');
     }
-    if (currency === 'USDC' || currency === 'USD') {
-      const [whole, fraction = ''] = amount.split('.');
-      if (fraction.length > 6) throw new Error('Skyzai Pay: USDC amounts require at most 6 decimals');
-      const units = BigInt(whole + fraction.padEnd(6, '0'));
-      // The server verifies with Number(amount) * 10**6; reject any precision loss.
-      const serverUnits = Math.round(Number(amount) * 1e6);
-      if (!Number.isSafeInteger(serverUnits) || BigInt(serverUnits) !== units) {
-        throw new Error('Skyzai Pay: USDC amount cannot be represented safely in smallest units');
-      }
-    }
+    // Only the server knows the configured token decimals; it must validate units before writing.
     if (!['mainnet', 'testnet'].includes(network)) throw new Error('Skyzai Pay: network must be mainnet or testnet');
     if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new Error('Skyzai Pay: metadata must be an object');
     const result = await this._request('createPayment', 'POST', { amount, currency, network, metadata });

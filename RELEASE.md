@@ -4,6 +4,29 @@ These are TYPE-THIS instructions for Ramesh.
 No push, publish, repository rename, or cloud operation was performed by the SDK worker.
 The package uses the Skyzai merchant API-key contract approved by the overseer on 2026-10-18.
 
+## Precision review follow-up 2026-10-27
+
+The review reproduced invoices accepted with six-decimal USDT amount `'1.0000001'` and two-decimal USDC amount `'1.001'` that the buyer cannot pay.
+The SDK now preserves decimal text without assuming six decimals for configured USDC/USD, and surfaces the matching server refusal as HTTP 400 `AMOUNT_NOT_REPRESENTABLE`.
+The server patch validates exact token units at creation using the resolved decimals and the completion verifier's numeric limits, before allocating or writing a transaction.
+Configured decimals must be integers from 0 through 18 because native buyer numeric verification overflows above 18; those configurations receive the same typed refusal even for an exact one-unit quote.
+Direct HTTP amounts with outer whitespace are also refused before invoice allocation or writes.
+Representable trailing zeroes remain valid.
+
+**Integration pending:** the real server checkout is unchanged because it is outside this seat's writable roots.
+The server technical owner must apply and review the full replacement `attachments/paysdk-fix-align-1027/server-precision-v3.patch` under `/Users/darkness/Work/Aureus/.agent-mail`, then rerun these suites against that checkout.
+It applies to unpatched Skyzai development `e9070a0aabbd480481280fa2cbf74611fbde7af5`; do not stack it over the original or v2 patches, which remain historical evidence.
+The fixes and generated change reports remain uncommitted as required by the fix-round-3 brief.
+The integrator must regenerate report facts for the final commit range.
+
+Local `npm test` passes **18/18**.
+Against a scratch copy of pinned development plus v3, E2E passes **63/63** and server gates pass **3/3**, for **84 passed, 0 failed** across the three SDK suites.
+All reviewer precision/admission fixtures separately pass **15/15**, and the six focused server payment suites pass **169/169** after TypeScript test compilation.
+The native buyer probe retains 18-decimal admission and 19/20-decimal refusal; no Dart buyer change is included.
+These results validate the draft patch; they do not establish integration into the actual server branch, a production build or independent review clearance.
+The earlier 47-test scratch results and unchanged-server failures are historical round-1 evidence; the cumulative follow-up report in `docs/changes/paysdk-fix-align-1027.md` records current results and artifact identity.
+Do not release the SDK precision change before the corresponding `createPayment` server fix is integrated, reviewed and deployed by Ramesh.
+
 ## server alignment 2026-10-26
 
 Proposed next version: **3.1.0**.

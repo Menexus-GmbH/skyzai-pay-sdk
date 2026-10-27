@@ -15,6 +15,113 @@ function buyerRequest(id) {
   return { auth: { uid: 'buyer', token: { firebase: { sign_in_provider: 'password' } } }, data: { transactionId: id, onChainTransactionId: CHAIN_TX } };
 }
 
+// Reviewer's invalid quotes and valid settlement controls, using real token resolution.
+for (const [currency, decimals, amount, units] of [
+  ['USDT', 6, '1.0000001', null],
+  ['USDC', 2, '1.001', null],
+  ['USDT', 6, '1.000001', 1_000_001],
+  ['USDC', 2, '1.23', 123],
+  ['USD', 2, '1.001', null],
+  ['USDC', 8, '0.00000001', 1],
+  ['USD', 8, '0.00000001', 1],
+  ['USDC', 18, '0.000000000000000001', 1],
+  ['USDT', 2, '1.2300', 123],
+]) {
+  test(`${currency} decimals=${decimals} amount=${amount}: ${units === null ? 'refused before invoice creation' : 'settles'}`, async t => {
+    const { server, sdk } = await setup(t);
+    const tokenId = '0.0.8001';
+    server.db.docs.set('appConfig/skyzaiPay', {
+      mainnet: { tokens: { [currency === 'USD' ? 'USDC' : currency]: { tokenId, decimals } } },
+    });
+    if (units === null) {
+      await assert.rejects(sdk.payments.create({ amount, currency }), {
+        name: 'SkyzaiPayError', status: 400, code: 'AMOUNT_NOT_REPRESENTABLE',
+      });
+      assert.equal([...server.db.docs.keys()].some(path => path.startsWith('transactions/')), false);
+      return;
+    }
+    const payment = await sdk.payments.create({ amount, currency });
+    const evidence = transfer(payment.id, units);
+    evidence.token_transfers = evidence.token_transfers.map(line => ({ ...line, token_id: tokenId }));
+    server.setMirror([evidence]);
+    server.setNow(Date.now());
+    assert.equal((await server.complete(buyerRequest(payment.id))).status, 'completed');
+    await payment.refresh();
+    assert.equal(payment.status, 'completed');
+  });
+}
+
+// Keep raw HTTP admission aligned with buyer syntax, independent of SDK validation.
+for (const [currency, decimals, amount, network] of [
+  ['USDC', 2, ' 1.23', 'mainnet'],
+  ['USDC', 2, '1.23 ', 'mainnet'],
+  ['USDC', 2, '\t1.23', 'mainnet'],
+  ...['mainnet', 'testnet'].flatMap(network => [
+    ['USDT', 6, '1.0000001', network],
+    ['USDC', 2, '1.001', network],
+    ['USD', 2, '1.001', network],
+    ['USDC', 19, '0.0000000000000000001', network],
+    ['USDT', 20, '0.00000000000000000001', network],
+    ['USD', 30, '0.000000000000000000000000000001', network],
+  ]),
+]) {
+  test(`raw ${network} ${currency} amount=${JSON.stringify(amount)} refuses before invoice allocation`, async t => {
+    const { server, sdk } = await setup(t);
+    let allocations = 0;
+    let writes = 0;
+    const collection = server.db.collection.bind(server.db);
+    server.db.collection = name => {
+      const result = collection(name);
+      if (name !== 'transactions') return result;
+      const doc = result.doc.bind(result);
+      return { ...result, doc: (...args) => {
+        allocations++;
+        const ref = doc(...args);
+        return { ...ref, set: (...values) => { writes++; return ref.set(...values); } };
+      } };
+    };
+    server.db.docs.set('appConfig/skyzaiPay', {
+      [network]: { tokens: { [currency === 'USD' ? 'USDC' : currency]: { tokenId: '0.0.8001', decimals } } },
+    });
+    const response = await fetch(`${server.baseURL}/createPayment`, {
+      method: 'POST', headers: { Authorization: `Bearer ${server.apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount, currency, network }),
+    });
+    const body = await response.json();
+    if (decimals > 18) {
+      for (const create of [sdk.payments.create, sdk.createPayment.bind(sdk)]) {
+        await assert.rejects(create({ amount, currency, network }), {
+          name: 'SkyzaiPayError', status: 400, code: 'AMOUNT_NOT_REPRESENTABLE',
+        });
+      }
+    }
+    assert.deepEqual({ status: response.status, allocations, writes,
+      invoices: [...server.db.docs.keys()].filter(path => path.startsWith('transactions/')).length },
+    { status: 400, allocations: 0, writes: 0, invoices: 0 }, JSON.stringify(body));
+    assert.equal(body.error, 'Amount cannot be represented safely in configured token units');
+  });
+}
+
+test('raw merchant HTTP create rejects invalid amounts and unsafe verification units before writing invoices', async t => {
+  const { server } = await setup(t);
+  for (const [decimals, amount] of [
+    [6, '0.0000001'], [6, '9007199254.740992'], [6, '9007199254.740991'],
+    [6, '-1'], [6, '0'], [6, '1e3'], [6, {}], [6, '1'.repeat(101)],
+    [-1, '1'], [31, '1'], [0, '1.1'],
+  ]) {
+    server.db.docs.set('appConfig/skyzaiPay', {
+      mainnet: { tokens: { USDT: { tokenId: '0.0.8001', decimals } } },
+    });
+    const response = await fetch(`${server.baseURL}/createPayment`, {
+      method: 'POST', headers: { Authorization: `Bearer ${server.apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount, currency: 'USDT', network: 'mainnet' }),
+    });
+    assert.equal(response.status, 400, `decimals=${decimals} amount=${JSON.stringify(amount)}`);
+    assert.equal((await response.json()).error, 'Amount cannot be represented safely in configured token units');
+    assert.equal([...server.db.docs.keys()].some(path => path.startsWith('transactions/')), false);
+  }
+});
+
 test('merchant create/get/cancel shapes retain checkout data and normalize response fields', async t => {
   const { server, sdk } = await setup(t);
   const request = { amount: '1.250000', currency: 'USD', network: 'mainnet', metadata: { orderId: 'shape-order', items: 2 } };
