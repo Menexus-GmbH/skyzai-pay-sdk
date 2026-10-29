@@ -1,7 +1,7 @@
 # Change report: TEST-BATCH0-PAY-1029
 
-Repo `/Users/darkness/Work/Aureus/aureus-pay-sdk`, branch `test/batch0-pin-1029`, range `b4b0112..working tree`.
-7 commits, 0 merges, 16 files, +1103 / -23 lines.
+Repo `/Users/darkness/Work/Aureus/aureus-pay-sdk`, branch `test/batch0-pin-1029`, range `b4b0112..4db91c4`.
+8 commits, 0 merges, 16 files, +1103 / -23 lines.
 
 Part 1 is written by the authoring agent. Part 2 is generated from git by `agentmail/bin/change-report` and is the ground truth: if they disagree, Part 2 wins and the disagreement is a review finding.
 
@@ -195,6 +195,7 @@ Node 18 runtime, live services, dashboard/device acceptance and the independent 
 - `30bfd6f` 2026-10-29 16:14 Ramesh Giri: gnhf 3: Completed FIX #8 test-first; all 115 local tests pass.
 - `46f3aa2` 2026-10-29 16:21 Ramesh Giri: gnhf 4: Completed FIX #9 test-first; all 120 local tests pass.
 - `9ca5aa5` 2026-10-29 16:29 Ramesh Giri: gnhf 5: Completed FIX #7 test-first; all 127 tests pass and this iteration’s report is regenerated.
+- `4db91c4` 2026-10-29 16:38 Ramesh Giri: gnhf 6: Completed FIX #10; every FIX row now passes and the cumulative report is regenerated.
 
 ## Source files (3)
 
@@ -229,6 +230,8 @@ Node 18 runtime, live services, dashboard/device acceptance and the independent 
 
 ### `test/runner-failures.test.js` (added, +86/-0)
 - Added: `mutate()`, `stop()`
+- Changed: `test 'combined runner rejects mutations and passes restored source without changing the checkout'`
+- Test cases added/edited (1): combined runner rejects mutations and passes restored source without changing the checkout
 
 ### `test/server-pin.json` (added, +5/-0)
 
