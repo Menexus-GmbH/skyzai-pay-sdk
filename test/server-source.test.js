@@ -1,7 +1,8 @@
-// Checks source-pin and locked dependency admission with disposable files, without server installs or network access.
+// Checks source-pin and locked dependency admission with disposable files/Git objects, without installs or network access.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -45,7 +46,8 @@ test('a pin absent from the local Git object store fails before loading handlers
 const versions = { typescript: '5.9.3', jsonwebtoken: '9.0.3' };
 
 function dependencyFixture(t) {
-  const { pinFile } = fixture(t);
+  const options = fixture(t);
+  const { pinFile } = options;
   const root = join(dirname(pinFile), 'archived-functions');
   const dependenciesRoot = join(dirname(pinFile), 'donor-functions');
   mkdirSync(root);
@@ -56,8 +58,60 @@ function dependencyFixture(t) {
     mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, 'package.json'), JSON.stringify({ name, version }));
   }
-  return { root, dependenciesRoot };
+  return { ...options, root, dependenciesRoot };
 }
+
+function gitFixture(t) {
+  const { root, dependenciesRoot, pinFile, cacheRoot } = dependencyFixture(t);
+  const repository = dirname(pinFile);
+  const functions = join(repository, 'functions');
+  renameSync(root, functions);
+  renameSync(join(dependenciesRoot, 'node_modules'), join(functions, 'node_modules'));
+  mkdirSync(join(functions, 'src'));
+  writeFileSync(join(functions, 'src/marker.js'), 'pinned source\n');
+  const git = (args, input) => execFileSync('git', ['-C', repository, ...args], {
+    input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' },
+  }).trim();
+  git(['init', '--quiet']);
+  git(['add', 'functions/package-lock.json', 'functions/src/marker.js']);
+  // Create objects only in this disposable repository; no real checkout or branch is written.
+  const sha = git(['commit-tree', git(['write-tree'])], 'pinned fixture\n');
+  writeFileSync(pinFile, JSON.stringify({ sha }));
+  return { repository, pinFile, cacheRoot, git, sha };
+}
+
+test('a pin must name a commit object directly, without peeling tags or accepting trees/blobs', async t => {
+  for (const type of ['tag', 'replaced tag', 'tree', 'blob']) {
+    await t.test(type, t => {
+      const options = gitFixture(t);
+      const { git, sha } = options;
+      let object;
+      if (type.endsWith('tag')) {
+        object = git(['mktag'], `object ${sha}\ntype commit\ntag fixture\ntagger Fixture <fixture@example.invalid> 1700000000 +0000\n\nfixture tag\n`);
+        if (type === 'replaced tag') git(['replace', '-f', object, sha]);
+      } else {
+        object = git(['rev-parse', `${sha}:${type === 'tree' ? 'functions' : 'functions/src/marker.js'}`]);
+      }
+      writeFileSync(options.pinFile, JSON.stringify({ sha: object }));
+      assert.throws(() => prepareServerSource(options), new RegExp(`Server pin ${object} must name a commit object; found ${type.endsWith('tag') ? 'tag' : type}`));
+    });
+  }
+});
+
+test('replacement refs cannot change the bytes archived for a commit pin', t => {
+  const options = gitFixture(t);
+  const { git, sha, repository } = options;
+  writeFileSync(join(repository, 'functions/src/marker.js'), 'replacement source\n');
+  git(['add', 'functions/src/marker.js']);
+  const replacement = git(['commit-tree', git(['write-tree'])], 'replacement fixture\n');
+  git(['replace', sha, replacement]);
+  assert.equal(git(['show', `${sha}:functions/src/marker.js`]), 'replacement source');
+  const source = prepareServerSource(options);
+  assert.equal(source.sha, sha);
+  assert.equal(readFileSync(join(source.root, 'src/marker.js'), 'utf8'), 'pinned source\n');
+  assert.equal(git(['replace', '-l']), sha);
+});
 
 test('matching donor dependencies report the archived lockfile versions', t => {
   const { root, dependenciesRoot } = dependencyFixture(t);

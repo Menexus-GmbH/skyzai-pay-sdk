@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import SkyzaiPay from '../src/index.js';
 import { startSkyzaiServer, transfer } from './helpers/skyzai-server.js';
+import { readServerPin } from './helpers/server-source.js';
 
 test('handler source matches the committed pin and is isolated from donor working files', async t => {
   const server = await startSkyzaiServer();
@@ -71,6 +72,47 @@ test('handler startup admits locked dependencies and refuses drift or absent ins
       assert.doesNotMatch(result.stdout, /HANDLER_STARTED/);
     });
   }
+});
+
+test('real handler startup and SDK payment ignore donor replacement refs', t => {
+  const donor = resolve(process.env.SKYZAI_APP_ROOT);
+  const sha = readServerPin();
+  const cache = new URL('./.cache/', import.meta.url);
+  mkdirSync(cache, { recursive: true });
+  const repository = mkdtempSync(new URL('./replacement-admission-', cache));
+  t.after(() => rmSync(repository, { recursive: true, force: true }));
+  const git = (args, input) => execFileSync('git', ['-C', repository, ...args], {
+    input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+    env: { ...process.env, GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' },
+  }).trim();
+  git(['init', '--quiet']);
+  const objects = execFileSync('git', ['-C', donor, 'rev-parse', '--path-format=absolute', '--git-path', 'objects'], { encoding: 'utf8' }).trim();
+  // Alternates read donor objects, while replacement refs and new objects stay in the disposable repository.
+  writeFileSync(join(repository, '.git/objects/info/alternates'), `${objects}\n`);
+  symlinkSync(join(donor, 'functions'), join(repository, 'functions'), 'dir');
+  const replacement = git(['commit-tree', git(['mktree'], '')], 'fixture without Functions\n');
+  git(['replace', sha, replacement]);
+  assert.equal(git(['ls-tree', sha]), '');
+  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', `
+    import assert from 'node:assert/strict';
+    import SkyzaiPay from ${JSON.stringify(new URL('../src/index.js', import.meta.url).href)};
+    import { startSkyzaiServer } from ${JSON.stringify(new URL('./helpers/skyzai-server.js', import.meta.url).href)};
+    const server = await startSkyzaiServer();
+    try {
+      assert.equal(server.source.sha, ${JSON.stringify(sha)});
+      const sdk = new SkyzaiPay({ apiKey: server.apiKey, baseURL: server.baseURL });
+      const payment = await sdk.payments.create({ amount: '1', currency: 'USDC' });
+      assert.equal(payment.status, 'pending');
+      console.log('PINNED_HANDLER_PAYMENT_OK');
+    } finally {
+      await server.close();
+    }
+  `], { env: { ...process.env, SKYZAI_APP_ROOT: repository }, encoding: 'utf8', timeout: 10_000 });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.ok(result.stdout.includes(`server_sha=${sha}`), result.stdout);
+  assert.match(result.stdout, /PINNED_HANDLER_PAYMENT_OK/);
+  assert.equal(git(['replace', '-l']), sha);
 });
 
 // Release gates owned by the separate Skyzai server change, never hidden with skips.

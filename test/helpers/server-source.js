@@ -1,5 +1,5 @@
 // Pins the actual-handler adapter to a Git archive, never the donor checkout's working files.
-// Validates borrowed dependency versions against that archive; creates disposable test/.cache trees removed at exit.
+// Requires a commit object without Git replacements, validates borrowed dependency versions, and removes archives at exit.
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -49,12 +49,16 @@ export function prepareServerSource({ repository = process.env.SKYZAI_APP_ROOT, 
   const sha = readServerPin(pinFile);
   if (!repository) throw new Error('Set SKYZAI_APP_ROOT to a local skyzai_app Git repository containing the pinned commit and installed Functions dependencies.');
   repository = resolve(repository);
-  const git = args => execFileSync('git', ['-C', repository, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const git = args => execFileSync('git', ['-C', repository, ...args], {
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_NO_REPLACE_OBJECTS: '1' },
+  });
+  let type;
   try {
-    git(['rev-parse', '--verify', `${sha}^{commit}`]);
+    type = git(['cat-file', '-t', sha]).trim();
   } catch (error) {
     throw new Error(`Server pin ${sha} is not available in ${repository}; supply a local skyzai_app repository containing that commit.`, { cause: error });
   }
+  if (type !== 'commit') throw new Error(`Server pin ${sha} must name a commit object; found ${type}.`);
   mkdirSync(cacheRoot, { recursive: true });
   const directory = mkdtempSync(join(cacheRoot, `server-${sha}-`));
   const cleanup = () => rmSync(directory, { recursive: true, force: true });

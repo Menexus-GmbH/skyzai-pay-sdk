@@ -15,7 +15,8 @@ Changing the pin requires rerunning all suites and reviewing the resulting SDK/s
 This baseline is not a claim about the latest server revision or deployed behavior.
 
 Set `SKYZAI_APP_ROOT` to an existing local `skyzai_app` Git repository containing that exact commit.
-The helper verifies the commit exists, archives its `functions/` tree into a unique directory under ignored `test/.cache/`, and removes that directory when the process exits.
+The helper requires the SHA to name a commit object directly, archives its `functions/` tree into a unique directory under ignored `test/.cache/`, and removes that directory when the process exits.
+Tag, tree and blob object SHAs fail admission; `GIT_NO_REPLACE_OBJECTS=1` keeps local replacement refs from changing either the object type or archived source.
 Every npm test command preloads `helpers/run-identity.js` to print SDK HEAD, `sdk_dirty` and the configured server SHA before any tests, including failures.
 Missing or malformed pins print `server_sha=unavailable` before the pin diagnostic; an unavailable Git object prints the requested SHA before failing admission.
 `sdk_dirty=true` means the tested working tree includes tracked edits or untracked files beyond HEAD.
