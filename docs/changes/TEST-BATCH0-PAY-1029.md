@@ -1,7 +1,7 @@
 # Change report: TEST-BATCH0-PAY-1029
 
-Repo `/Users/darkness/Work/Aureus/aureus-pay-sdk`, branch `test/batch0-pin-1029`, range `5b08e84..working tree`.
-0 commits, 0 merges, 5 files, +156 / -38 lines.
+Repo `/Users/darkness/Work/Aureus/aureus-pay-sdk`, branch `test/batch0-pin-1029`, range `910f704..working tree`.
+0 commits, 0 merges, 5 files, +120 / -27 lines.
 
 Part 1 is written by the authoring agent. Part 2 is generated from git by `agentmail/bin/change-report` and is the ground truth: if they disagree, Part 2 wins and the disagreement is a review finding.
 
@@ -9,15 +9,15 @@ Part 1 is written by the authoring agent. Part 2 is generated from git by `agent
 
 ## What and why
 
-Fix-round iteration 2 completes review finding #5: server pins must name commit objects directly, and Git replacement refs cannot alter the admitted type or archived source.
-Annotated tags, including tags locally replaced with commits, trees and blobs now fail with their actual object type.
-The earlier fix-round iteration completed #1 and #2: the harness admits TypeScript/jsonwebtoken only when installed versions match the archived lockfile, reports both versions and diagnoses missing dependencies clearly.
+Fix-round iteration 3 completes review finding #8: pinned server commits must contain a `functions/src` directory, with a clear diagnostic before archive allocation or dependency loading.
+A missing `functions` tree, missing `src` tree or file at `functions/src` now fails source admission with the pinned SHA and required source layout.
+Earlier fix-round iterations completed #1/#2 (locked direct dependency versions, receipts and missing-install diagnostics) and #5 (direct commit-object pins and Git replacement isolation).
 The server remains pinned to `06ced3371528a871849156a70a114e457215b1be` (PAYSDK-PRECISION-V3-1027, reviewed PASS r4).
-This report's generated facts cover only this iteration's uncommitted changes on SDK HEAD `5b08e844c54ba82634561a2cb3381b87c7318ed9`.
+This report's generated facts cover only this iteration's uncommitted changes on SDK HEAD `910f7046eeb8bc252fd00a1a4e388b8a9d39fd02`.
 The earlier P1 foundation is already in orchestrator commits `e47b9f2` and `cec6782`; its failing-first receipts are retained below as historical evidence.
-Orchestrator commit `5b08e84` contains fix-round iteration 1.
+Orchestrator commits `5b08e84` and `910f704` contain fix-round iterations 1 and 2 respectively.
 No SDK or server branch commit was made.
-The fix-round stop condition is not met: FIX #7, #8, #9 and #10 remain open.
+The fix-round stop condition is not met: FIX #7, #9 and #10 remain open.
 P4 remains outside this iteration.
 
 ## Flow (step by step)
@@ -25,7 +25,9 @@ P4 remains outside this iteration.
 1. `npm run test:all` runs the unit, E2E and server-requirement suites sequentially, stopping at any nonzero exit.
 2. Each suite's preloader prints SDK HEAD, working-tree dirty state and the configured server SHA before test execution.
 3. Handler startup checks `git cat-file -t <pin>` with `GIT_NO_REPLACE_OBJECTS=1` and rejects every object type except `commit`.
-It archives the pinned Functions source with the same Git environment into an ignored disposable directory, independently of donor HEAD, working source or replacement refs.
+It then checks `git cat-file -t <pin>:functions/src` is `tree`, using the same replacement-disabled Git environment.
+Missing directories or another object type stop startup with `Pinned server commit <sha> must contain the functions/src directory; choose a server pin with the Functions source layout.`
+Only after successful layout admission does it archive the pinned Functions source into an ignored disposable directory, independently of donor HEAD, working source or replacement refs.
 4. `verifyServerDependencies` reads exact TypeScript/jsonwebtoken versions from that archived `package-lock.json` and resolves installed package metadata using the same donor Functions root as the handler loader.
 5. Missing package metadata or a version mismatch stops startup with an `install Functions dependencies matching the pinned lockfile` diagnostic, and removes the archive.
 6. Successful admission prints `[skyzai test source] sdk_sha=<HEAD> server_sha=<pin> typescript=5.9.3 jsonwebtoken=9.0.3 source=git-archive` and returns the verified versions with the source descriptor.
@@ -34,6 +36,17 @@ Test teardown closes servers; process exit removes successful archives.
 
 ## How it is implemented
 
+`prepareServerSource` in `test/helpers/server-source.js` validates the source tree before creating a cache directory or resolving dependency metadata.
+Checking the Git object type guarantees that `functions/src` is an actual directory in the pinned commit rather than a file or mutable donor path.
+It reuses the existing Git wrapper; no new configuration, dependency or SDK API is needed.
+`test/server-source.test.js` creates three partial-layout commits in disposable repositories: no Functions, no source directory and a file at the source path.
+Each must fail with the source-layout diagnostic and leave the cache unallocated.
+For the missing-directory cases the donor working source is still present, proving the check uses committed objects rather than working files.
+`test/server-requirements.test.js` copies the actual handler entry point and source helper into a disposable SDK with a scratch pin.
+Subprocess calls to `startSkyzaiServer()` must exit 1 for both missing-directory layouts, name the pinned SHA and required directory, never print `HANDLER_STARTED`, and leave no archive cache.
+The committed pin and real donor stay untouched; the existing real SDK/HTTP payment and server gates remain passing controls.
+
+The following Git behavior was implemented in fix-round iteration 2 and remains covered.
 The donor Git wrapper in `test/helpers/server-source.js` sets `GIT_NO_REPLACE_OBJECTS=1` for both object admission and archive creation.
 `cat-file -t` replaces the earlier `rev-parse <pin>^{commit}` check, which peeled annotated tags and could consult replacement objects.
 Existing absent-object diagnostics remain intact; non-commit objects now receive a specific `must name a commit object; found <type>` error before archive allocation.
@@ -59,12 +72,13 @@ Only the two borrowed direct package versions are checked; transitive versions a
 ## How it was verified
 
 Commands used Node 22.23.3 via `fnm exec --using 22.23.3`.
-The tested SDK identity is HEAD `5b08e844c54ba82634561a2cb3381b87c7318ed9` plus this working diff (`sdk_dirty=true`).
+The tested SDK identity is HEAD `910f7046eeb8bc252fd00a1a4e388b8a9d39fd02` plus this working diff (`sdk_dirty=true`).
 The pinned server identity is `06ced3371528a871849156a70a114e457215b1be`, with TypeScript 5.9.3 and jsonwebtoken 9.0.3.
 The donor `/Users/darkness/Work/Aureus/skyzai_app` stayed at `122f16418e862eac2f460e0fd15bdd7658f29f23`, with only its pre-existing untracked `.iac-security-fix-0919/`.
 
 ```sh
 fnm exec --using 22.23.3 node --test test/server-source.test.js
+SKYZAI_APP_ROOT=/Users/darkness/Work/Aureus/skyzai_app fnm exec --using 22.23.3 node --import ./test/helpers/run-identity.js --test --test-name-pattern='actual handler startup clearly rejects' test/server-requirements.test.js
 SKYZAI_APP_ROOT=/Users/darkness/Work/Aureus/skyzai_app fnm exec --using 22.23.3 node --import ./test/helpers/run-identity.js --test test/server-requirements.test.js
 SKYZAI_APP_ROOT=/Users/darkness/Work/Aureus/skyzai_app fnm exec --using 22.23.3 npm run test:all
 ```
@@ -73,17 +87,24 @@ SKYZAI_APP_ROOT=/Users/darkness/Work/Aureus/skyzai_app fnm exec --using 22.23.3 
 
 | FIX requirement | First failing proof before implementation | Passing proof |
 | --- | --- | --- |
+| #8: Pinned source must have a Functions source directory | Unit run before implementation: 20 tests, 16 pass / 4 fail (three layout subtests and their parent). Missing Functions produced an archive pathspec error; missing `src` and a file at `src` incorrectly passed preparation. | Same unit command: 20/20 pass; all three malformed layouts receive the SHA-specific source-layout diagnostic before cache allocation. |
+| #8: Actual handler startup must diagnose missing layout clearly | Focused startup run before implementation: 3 tests, 0 pass / 3 fail. Missing Functions produced a Git error; missing `src` surfaced a dependency-lockfile error. | Same focused command: 3/3 pass; both real startup subprocesses exit 1 with the required diagnostic and leave no source cache. The restored three-suite run passes 115/115. |
 | #5: Pin must be a commit object directly | `node --test test/server-source.test.js`: plain/replaced annotated tags were accepted; tree/blob cases produced the wrong generic diagnostic. | The same four object-type cases pass and report the original tag/tree/blob type, including a tag replaced with a commit. |
 | #5: Replacement refs must not alter pinned archive bytes | The unit marker assertion got `replacement source` instead of `pinned source`. The real-handler subprocess failed archive creation because its local replacement removed Functions. | The same unit assertion gets original pinned bytes; the real-handler subprocess starts, records the pinned SHA and creates a pending payment via SDK/HTTP with `PINNED_HANDLER_PAYMENT_OK`. Replacement refs remain unchanged. |
 | #1: Both dependency versions must equal the archived lockfile | Unit command: 4 pass / 6 fail because the verifier was absent, including both mismatch cases. Real handler startup with each disposable package version set to `0.0.0` exited 0 and printed `HANDLER_STARTED`, failing the required rejection assertions. | Same unit regressions pass; each drift subprocess now exits 1 with package name, expected/installed version and install instructions before handler startup. |
 | #1: Verified dependency versions must be recorded | Actual source descriptor had no `dependencyVersions`; the matching startup control printed no version receipt. | Source descriptor equals archived lockfile versions; matching actual-handler startup exits 0 and prints TypeScript/jsonwebtoken versions in the source identity line. |
 | #2: Missing donor dependencies must fail clearly | Real startup subprocess exited 1 with raw `Cannot find module 'typescript'`; the diagnostic assertion failed. The unit absence assertion also failed before the verifier existed. | Same unit and startup assertions pass with `Cannot resolve Functions dependency typescript ... install Functions dependencies matching the pinned lockfile`. |
 
-Iteration 2's first unit run reported 16 tests: 10 pass / 6 fail, counting the failed parent of four object-type subtests.
+Iteration 3's combined command exits 0 with **115 passing tests: 39 unit, 63 E2E and 13 server requirements**, zero failures, cancellations, skips or todos.
+Its focused unit and startup commands passed 20/20 and 3/3 respectively after implementation.
+Raw local evidence is under ignored `test/.cache/fix-layout-iteration3/`: `unit-before.log`, `requirements-before.log`, `unit-after.log`, `requirements-after.log`, `all-after.log`.
+The new tests and commands are tracked source and can be rerun without those logs.
+
+Historically, iteration 2's first unit run reported 16 tests: 10 pass / 6 fail, counting the failed parent of four object-type subtests.
 Its first server-requirement run reported 10 tests: 9 pass / 1 fail, with the failure at actual handler startup under the replacement ref.
-After implementation, the isolated source unit command passes 16/16, and the combined command exits 0 with **108 passing tests: 35 unit, 63 E2E and 10 server requirements**, zero failures, cancellations, skips or todos.
+After that iteration's implementation, the isolated source unit command passed 16/16, and the combined command exited 0 with 108 passing tests: 35 unit, 63 E2E and 10 server requirements, zero failures, cancellations, skips or todos.
 Raw iteration-2 logs are local ignored evidence under `test/.cache/fix-git-iteration2/`: `unit-before.log`, `requirements-before.log`, `unit-after.log`, `all-after.log`.
-The new fixture tests and exact commands are in source; rerunning them does not require preserving the logs.
+Those fixture tests and exact commands are in source; rerunning them does not require preserving the logs.
 Historically, iteration 1's first server-requirement run reported 9 tests, 3 pass / 6 fail, and its combined passing run reported 101 tests: 29 unit, 63 E2E and 9 server requirements.
 Its first unit log records the absent dependency helper; the startup regressions separately reproduce the dependency defects through the real archive/loader boundary.
 Those older logs remain under `test/.cache/fix-dependencies-iteration1/`: `unit-before.log`, `requirements-before.log`, `all-after.log`.
@@ -99,7 +120,7 @@ All validation commands exited; no source archive or disposable donor directory 
 | FIX #2 missing dependency diagnostic | Implemented and verified above. |
 | FIX #5 replacement refs and non-commit objects | Implemented and verified above with object-type/byte-level units and real SDK/handler startup. |
 | FIX #7 signal cleanup and stale archive pruning | Open: add failing-first signal and restart tests. |
-| FIX #8 absent Functions tree | Open: add failing-first clear source-layout diagnostic. |
+| FIX #8 absent Functions tree | Implemented and verified above with directory/type admission units and real handler startup subprocesses. |
 | FIX #9 Node engine floor and absent Git | Open: align tooling metadata and add a clear missing-Git test. |
 | FIX #10 cumulative report and reproducible original mutation proofs | Open: this iteration's facts are regenerated, but final cumulative facts and a tracked reproduction for the original ignored `prove_failures.py` are still required. |
 | ACCEPT+DOC #3 dirty tree | `sdk_dirty` is recorded; dirty trees remain allowed, with HEAD identifying the base rather than the exact uncommitted bytes. |
@@ -146,21 +167,20 @@ Normal independent review and the scoped read-only re-break remain prerequisites
 
 ## Test files (4)
 
-### `test/README.md` (modified, +2/-1)
+### `test/README.md` (modified, +1/-0)
 
-### `test/helpers/server-source.js` (modified, +7/-3)
+### `test/helpers/server-source.js` (modified, +8/-1)
 - Changed: `git()`
 
-### `test/server-requirements.test.js` (modified, +42/-0)
+### `test/server-requirements.test.js` (modified, +47/-1)
 - Added: `git()`
-- Changed: `test 'real handler startup and SDK payment ignore donor replacement refs'`
-- Test cases added/edited (1): real handler startup and SDK payment ignore donor replacement refs
+- Changed: `test 'actual handler startup clearly rejects pins without the Functions source layout'`
+- Test cases added/edited (1): actual handler startup clearly rejects pins without the Functions source layout
 
-### `test/server-source.test.js` (modified, +58/-4)
-- Added: `git()`, `gitFixture()`
-- Changed: `dependencyFixture()`, `test 'a pin must name a commit object directly, without peeling tags or accepting trees/blobs'`, `test 'replacement refs cannot change the bytes archived for a commit pin'`
-- Test cases added/edited (2): a pin must name a commit object directly, without peeling tags or accepting trees/blobs; replacement refs cannot change the bytes archived for a commit pin
+### `test/server-source.test.js` (modified, +20/-1)
+- Changed: `test 'a pinned commit must contain a Functions source directory before archive allocation'`
+- Test cases added/edited (1): a pinned commit must contain a Functions source directory before archive allocation
 
 ## Docs and context files (1)
 
-### `docs/changes/TEST-BATCH0-PAY-1029.md` (modified, +47/-30)
+### `docs/changes/TEST-BATCH0-PAY-1029.md` (modified, +44/-24)

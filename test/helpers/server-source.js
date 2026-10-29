@@ -1,5 +1,5 @@
 // Pins the actual-handler adapter to a Git archive, never the donor checkout's working files.
-// Requires a commit object without Git replacements, validates borrowed dependency versions, and removes archives at exit.
+// Requires a commit object with functions/src and no Git replacements, validates borrowed deps, and removes archives at exit.
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -59,6 +59,13 @@ export function prepareServerSource({ repository = process.env.SKYZAI_APP_ROOT, 
     throw new Error(`Server pin ${sha} is not available in ${repository}; supply a local skyzai_app repository containing that commit.`, { cause: error });
   }
   if (type !== 'commit') throw new Error(`Server pin ${sha} must name a commit object; found ${type}.`);
+  try {
+    if (git(['cat-file', '-t', `${sha}:functions/src`]).trim() !== 'tree') {
+      throw new Error('functions/src is not a directory.');
+    }
+  } catch (error) {
+    throw new Error(`Pinned server commit ${sha} must contain the functions/src directory; choose a server pin with the Functions source layout.`, { cause: error });
+  }
   mkdirSync(cacheRoot, { recursive: true });
   const directory = mkdtempSync(join(cacheRoot, `server-${sha}-`));
   const cleanup = () => rmSync(directory, { recursive: true, force: true });

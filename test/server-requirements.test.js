@@ -2,9 +2,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import SkyzaiPay from '../src/index.js';
 import { startSkyzaiServer, transfer } from './helpers/skyzai-server.js';
 import { readServerPin } from './helpers/server-source.js';
@@ -113,6 +114,51 @@ test('real handler startup and SDK payment ignore donor replacement refs', t => 
   assert.ok(result.stdout.includes(`server_sha=${sha}`), result.stdout);
   assert.match(result.stdout, /PINNED_HANDLER_PAYMENT_OK/);
   assert.equal(git(['replace', '-l']), sha);
+});
+
+test('actual handler startup clearly rejects pins without the Functions source layout', async t => {
+  const cache = new URL('./.cache/', import.meta.url);
+  mkdirSync(cache, { recursive: true });
+  const directory = mkdtempSync(new URL('./layout-admission-', cache));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  for (const layout of ['no-functions', 'no-src']) {
+    await t.test(layout, () => {
+      const repository = join(directory, layout);
+      mkdirSync(join(repository, 'test/helpers'), { recursive: true });
+      // Copy the real entry point and config into a disposable SDK; never mutate the committed pin.
+      for (const name of ['skyzai-server.js', 'server-source.js']) {
+        copyFileSync(new URL(`./helpers/${name}`, import.meta.url), join(repository, 'test/helpers', name));
+      }
+      const git = (args, input) => execFileSync('git', ['-C', repository, ...args], {
+        input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, GIT_AUTHOR_NAME: 'Fixture', GIT_AUTHOR_EMAIL: 'fixture@example.invalid', GIT_COMMITTER_NAME: 'Fixture', GIT_COMMITTER_EMAIL: 'fixture@example.invalid' },
+      }).trim();
+      git(['init', '--quiet']);
+      if (layout === 'no-src') {
+        mkdirSync(join(repository, 'functions'));
+        writeFileSync(join(repository, 'functions/package-lock.json'), '{}');
+        git(['add', 'functions/package-lock.json']);
+      }
+      const sha = git(['commit-tree', git(['write-tree'])], 'incomplete Functions layout\n');
+      writeFileSync(join(repository, 'test/server-pin.json'), JSON.stringify({ sha }));
+      const result = spawnSync(process.execPath, ['--input-type=module', '--eval', `
+        import { startSkyzaiServer } from ${JSON.stringify(pathToFileURL(join(repository, 'test/helpers/skyzai-server.js')).href)};
+        try {
+          const server = await startSkyzaiServer();
+          await server.close();
+          console.log('HANDLER_STARTED');
+        } catch (error) {
+          console.error(error.message);
+          process.exitCode = 1;
+        }
+      `], { env: { ...process.env, SKYZAI_APP_ROOT: repository }, encoding: 'utf8', timeout: 10_000 });
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+      assert.match(result.stderr, new RegExp(`Pinned server commit ${sha} must contain the functions/src directory`));
+      assert.doesNotMatch(result.stdout, /HANDLER_STARTED/);
+      assert.equal(existsSync(join(repository, 'test/.cache')), false);
+    });
+  }
 });
 
 // Release gates owned by the separate Skyzai server change, never hidden with skips.

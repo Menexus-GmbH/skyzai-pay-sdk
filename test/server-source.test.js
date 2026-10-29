@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -80,6 +80,25 @@ function gitFixture(t) {
   writeFileSync(pinFile, JSON.stringify({ sha }));
   return { repository, pinFile, cacheRoot, git, sha };
 }
+
+test('a pinned commit must contain a Functions source directory before archive allocation', async t => {
+  for (const layout of ['no functions', 'no src', 'src is a file']) {
+    await t.test(layout, t => {
+      const options = gitFixture(t);
+      const { git, repository } = options;
+      git(['rm', '-r', '--cached', layout === 'no functions' ? 'functions' : 'functions/src']);
+      if (layout === 'src is a file') {
+        rmSync(join(repository, 'functions/src'), { recursive: true });
+        writeFileSync(join(repository, 'functions/src'), 'not a directory\n');
+        git(['add', 'functions/src']);
+      }
+      const sha = git(['commit-tree', git(['write-tree'])], 'incomplete Functions layout\n');
+      writeFileSync(options.pinFile, JSON.stringify({ sha }));
+      assert.throws(() => prepareServerSource(options), new RegExp(`Pinned server commit ${sha} must contain the functions/src directory`));
+      assert.equal(existsSync(options.cacheRoot), false);
+    });
+  }
+});
 
 test('a pin must name a commit object directly, without peeling tags or accepting trees/blobs', async t => {
   for (const type of ['tag', 'replaced tag', 'tree', 'blob']) {
