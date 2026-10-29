@@ -18,7 +18,12 @@ Changing the pin requires rerunning all suites and reviewing the resulting SDK/s
 This baseline is not a claim about the latest server revision or deployed behavior.
 
 Set `SKYZAI_APP_ROOT` to an existing local `skyzai_app` Git repository containing that exact commit.
-The helper requires the SHA to name a commit object directly, archives its `functions/` tree into a unique directory under ignored `test/.cache/`, and removes that directory when the process exits.
+The helper requires the SHA to name a commit object directly and archives its `functions/` tree into a unique `server-<sha>-<pid>-<random>` directory under ignored `test/.cache/`.
+Normal exit, SIGINT and SIGTERM remove this process's archives; interrupted runs retain conventional exit codes 130 and 143.
+Before allocating a new archive, startup prunes managed directories whose owner PID no longer exists, including leftovers from SIGKILL or a different server pin.
+Live owners, inaccessible owners, symlinks, unrelated cache entries and older directories without a PID remain untouched because their ownership cannot safely be disproved.
+A reused PID can conservatively retain a stale directory until that process ends.
+The source and actual-handler lifecycle regressions use `helpers/archive-worker.js` to coordinate readiness over IPC, bound worker lifetimes and reap every subprocess on teardown.
 Tag, tree and blob object SHAs fail admission; `GIT_NO_REPLACE_OBJECTS=1` keeps local replacement refs from changing either the object type or archived source.
 Before allocating an archive, the helper requires the pinned commit to contain the `functions/src` directory; missing Functions/source directories or a file at that path fail with a clear source-layout diagnostic.
 Every npm test command preloads `helpers/run-identity.js` to print SDK HEAD, `sdk_dirty` and the configured server SHA before any tests, including failures.

@@ -1,13 +1,41 @@
 // Pins the actual-handler adapter to a Git archive, never the donor checkout's working files.
-// Requires a commit object with functions/src and no Git replacements, validates borrowed deps, and removes archives at exit.
+// Validates source/deps, cleans archives on exit/signals and prunes dead PID owners without touching live runs or the donor.
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const sdkRoot = fileURLToPath(new URL('../..', import.meta.url));
 const defaultPinFile = join(sdkRoot, 'test/server-pin.json');
+const sourceDirectories = new Set();
+
+function pruneDeadSources(cacheRoot) {
+  for (const entry of readdirSync(cacheRoot, { withFileTypes: true })) {
+    const match = /^server-[0-9a-f]{40}-([1-9][0-9]*)-[A-Za-z0-9]+$/.exec(entry.name);
+    const pid = Number(match?.[1]);
+    if (!entry.isDirectory() || !Number.isInteger(pid) || pid > 2147483647) continue;
+    try {
+      // shortcut: reused PIDs retain stale archives; add process-start identity if PID reuse causes cache growth.
+      process.kill(pid, 0);
+    } catch (error) {
+      if (error.code === 'ESRCH') rmSync(join(cacheRoot, entry.name), { recursive: true, force: true });
+      else if (error.code !== 'EPERM') throw error;
+    }
+  }
+}
+
+function cleanSourceOnExit(directory) {
+  if (sourceDirectories.size === 0) {
+    process.once('exit', () => {
+      for (const source of sourceDirectories) rmSync(source, { recursive: true, force: true });
+    });
+    for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+      process.once(signal, () => process.exit(code));
+    }
+  }
+  sourceDirectories.add(directory);
+}
 
 export function readServerPin(pinFile = defaultPinFile) {
   let pin;
@@ -67,7 +95,8 @@ export function prepareServerSource({ repository = process.env.SKYZAI_APP_ROOT, 
     throw new Error(`Pinned server commit ${sha} must contain the functions/src directory; choose a server pin with the Functions source layout.`, { cause: error });
   }
   mkdirSync(cacheRoot, { recursive: true });
-  const directory = mkdtempSync(join(cacheRoot, `server-${sha}-`));
+  pruneDeadSources(cacheRoot);
+  const directory = mkdtempSync(join(cacheRoot, `server-${sha}-${process.pid}-`));
   const cleanup = () => rmSync(directory, { recursive: true, force: true });
   try {
     const archive = join(directory, 'functions.tar');
@@ -79,7 +108,7 @@ export function prepareServerSource({ repository = process.env.SKYZAI_APP_ROOT, 
     const dependencyVersions = verifyServerDependencies(root, dependenciesRoot);
     const sdkSha = execFileSync('git', ['-C', sdkRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
     console.info(`[skyzai test source] sdk_sha=${sdkSha} server_sha=${sha} typescript=${dependencyVersions.typescript} jsonwebtoken=${dependencyVersions.jsonwebtoken} source=git-archive`);
-    process.once('exit', cleanup);
+    cleanSourceOnExit(directory);
     return { root, dependenciesRoot, dependencyVersions, sha, sdkSha };
   } catch (error) {
     cleanup();

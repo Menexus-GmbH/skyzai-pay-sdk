@@ -1,14 +1,15 @@
-// Checks pinned source/dependency admission and merchant release requirements using the local SDK/HTTP adapter.
+// Checks source/dependency admission, interrupted archive recovery and merchant release gates using the local SDK/HTTP adapter.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import SkyzaiPay from '../src/index.js';
 import { startSkyzaiServer, transfer } from './helpers/skyzai-server.js';
 import { readServerPin } from './helpers/server-source.js';
+import { startArchiveWorker } from './helpers/archive-worker.js';
 
 test('handler source matches the committed pin and is isolated from donor working files', async t => {
   const server = await startSkyzaiServer();
@@ -159,6 +160,56 @@ test('actual handler startup clearly rejects pins without the Functions source l
       assert.equal(existsSync(join(repository, 'test/.cache')), false);
     });
   }
+});
+
+test('actual SDK/handler runs clean interrupted archives and recover after SIGKILL without pruning live runs', async t => {
+  const cache = new URL('./.cache/', import.meta.url);
+  mkdirSync(cache, { recursive: true });
+  const directory = mkdtempSync(new URL('./lifecycle-admission-', cache));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  mkdirSync(join(directory, 'test/helpers'), { recursive: true });
+  for (const name of ['skyzai-server.js', 'server-source.js']) {
+    copyFileSync(new URL(`./helpers/${name}`, import.meta.url), join(directory, 'test/helpers', name));
+  }
+  copyFileSync(new URL('./server-pin.json', import.meta.url), join(directory, 'test/server-pin.json'));
+  const gitDirectory = execFileSync('git', ['rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim();
+  symlinkSync(gitDirectory, join(directory, '.git'), 'dir');
+  const script = `
+    import { startSkyzaiServer } from ${JSON.stringify(pathToFileURL(join(directory, 'test/helpers/skyzai-server.js')).href)};
+    import SkyzaiPay from ${JSON.stringify(new URL('../src/index.js', import.meta.url).href)};
+    const server = await startSkyzaiServer();
+    const sdk = new SkyzaiPay({ apiKey: server.apiKey, baseURL: server.baseURL });
+    const payment = await sdk.payments.create({ amount: '10.123456', currency: 'USDC', network: 'mainnet' });
+    process.send({ root: server.source.root, status: payment.status, baseURL: server.baseURL });
+  `;
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    await t.test(signal, async t => {
+      const worker = await startArchiveWorker(t, script);
+      assert.equal(worker.status, 'pending');
+      worker.child.kill(signal);
+      await worker.exited;
+      assert.equal(existsSync(dirname(worker.root)), false, `${signal} must clean actual-handler sources`);
+    });
+  }
+  await t.test('SIGKILL restart preserves concurrent handler', async t => {
+    const live = await startArchiveWorker(t, script);
+    const killed = await startArchiveWorker(t, script);
+    killed.child.kill('SIGKILL');
+    assert.deepEqual(await killed.exited, { code: null, signal: 'SIGKILL' });
+    assert.ok(existsSync(killed.root));
+    const restarted = await startArchiveWorker(t, script);
+    assert.equal(existsSync(dirname(killed.root)), false, 'restart must prune actual-handler dead sources');
+    for (const worker of [live, restarted]) {
+      assert.equal(worker.status, 'pending');
+      assert.ok(existsSync(join(worker.root, 'src/payment/createPayment.ts')));
+      const response = await fetch(`${worker.baseURL}/unknown-local-route`);
+      assert.equal(response.status, 404, 'surviving loopback server must remain usable');
+      await response.text();
+      worker.child.send('exit');
+      assert.deepEqual(await worker.exited, { code: 0, signal: null });
+      assert.equal(existsSync(dirname(worker.root)), false);
+    }
+  });
 });
 
 // Release gates owned by the separate Skyzai server change, never hidden with skips.

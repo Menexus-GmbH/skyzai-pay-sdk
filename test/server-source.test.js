@@ -1,12 +1,13 @@
-// Checks source-pin and locked dependency admission with disposable files/Git objects, without installs or network access.
+// Checks source/dependency admission and archive lifecycle with disposable Git objects/processes, without installs or network access.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readServerPin, prepareServerSource, verifyServerDependencies } from './helpers/server-source.js';
+import { startArchiveWorker } from './helpers/archive-worker.js';
 
 function fixture(t, content) {
   const directory = mkdtempSync(join(tmpdir(), 'skyzai-pin-'));
@@ -80,6 +81,51 @@ function gitFixture(t) {
   writeFileSync(pinFile, JSON.stringify({ sha }));
   return { repository, pinFile, cacheRoot, git, sha };
 }
+
+function sourceWorker(t, { repository, pinFile, cacheRoot }) {
+  return startArchiveWorker(t, `
+    import { prepareServerSource } from ${JSON.stringify(new URL('./helpers/server-source.js', import.meta.url).href)};
+    const source = prepareServerSource(${JSON.stringify({ repository, pinFile, cacheRoot })});
+    process.send({ root: source.root });
+  `);
+}
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  test(`source archives are removed on ${signal}`, async t => {
+    const worker = await sourceWorker(t, gitFixture(t));
+    assert.ok(existsSync(join(worker.root, 'src/marker.js')));
+    worker.child.kill(signal);
+    const result = await worker.exited;
+    assert.equal(existsSync(dirname(worker.root)), false, `${signal} must remove its source archive`);
+    assert.ok(result.signal === signal || result.code === (signal === 'SIGINT' ? 130 : 143));
+  });
+}
+
+test('restart prunes SIGKILL archives while preserving live concurrent sources and unrelated cache entries', async t => {
+  const options = gitFixture(t);
+  const live = await sourceWorker(t, options);
+  const killed = await sourceWorker(t, options);
+  killed.child.kill('SIGKILL');
+  assert.deepEqual(await killed.exited, { code: null, signal: 'SIGKILL' });
+  assert.ok(existsSync(killed.root), 'SIGKILL cannot run exit cleanup');
+  const deadDirectory = dirname(killed.root).replace(options.sha, 'f'.repeat(40));
+  renameSync(dirname(killed.root), deadDirectory);
+  const preserved = ['keep-me', `server-${options.sha}-legacy`, `server-${options.sha}-999999999999-invalid`]
+    .map(name => join(options.cacheRoot, name));
+  for (const directory of preserved) mkdirSync(directory);
+  const symlink = join(options.cacheRoot, `server-${options.sha}-${killed.child.pid}-symlink`);
+  symlinkSync(dirname(live.root), symlink, 'dir');
+  const restarted = await sourceWorker(t, options);
+  assert.equal(existsSync(deadDirectory), false, 'restart must prune dead owners across server pins');
+  assert.equal(readFileSync(join(live.root, 'src/marker.js'), 'utf8'), 'pinned source\n');
+  assert.ok(existsSync(restarted.root));
+  for (const directory of [...preserved, symlink]) assert.ok(existsSync(directory));
+  for (const worker of [live, restarted]) {
+    worker.child.send('exit');
+    assert.deepEqual(await worker.exited, { code: 0, signal: null });
+    assert.equal(existsSync(dirname(worker.root)), false, 'normal exit must still clean archives');
+  }
+});
 
 test('a pinned commit must contain a Functions source directory before archive allocation', async t => {
   for (const layout of ['no functions', 'no src', 'src is a file']) {
