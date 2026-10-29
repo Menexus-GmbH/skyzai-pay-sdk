@@ -1,5 +1,7 @@
+# Local dependencies, generated output and disposable handler test archives/receipts.
 node_modules/
 .env
 *.log
 dist/
 .DS_Store
+test/.cache/

@@ -8,7 +8,7 @@ It targets the Skyzai backend exclusively.
 npm install skyzai-pay
 ```
 
-Requires Node.js 18+ or a browser with Fetch and AbortController.
+Requires Node.js 18.18+ or a browser with Fetch and AbortController.
 This package uses ES modules.
 
 ## Merchant setup
@@ -272,13 +272,22 @@ Node.js 16 is no longer supported.
 
 ```sh
 npm ci
-npm test
-SKYZAI_APP_ROOT=/path/to/skyzai_app npm run test:e2e
-SKYZAI_APP_ROOT=/path/to/skyzai_app npm run test:server-requirements
+export SKYZAI_APP_ROOT=/path/to/skyzai_app
+npm run test:all
 ```
 
-The Skyzai checkout must have its `functions/node_modules` installed, including TypeScript and jsonwebtoken.
-The harness transpiles the actual server source in memory and runs the SDK through a loopback HTTP server.
+The [committed server pin](test/server-pin.json) selects the exact Functions revision, currently the reviewed precision-v3 commit.
+`SKYZAI_APP_ROOT` supplies a local Git repository containing that commit and installed `functions/node_modules`, including TypeScript and jsonwebtoken.
+Before handler startup, both installed package versions must match the pinned Functions lockfile; the source receipt records the verified versions.
+Missing or mismatched dependencies fail with instructions to install Functions dependencies matching that lockfile.
+The checkout's HEAD and uncommitted source files are not used.
+The harness extracts the pinned Functions tree with `git archive` into a unique ignored `test/.cache/` directory, transpiles that source in memory, and runs the SDK through a loopback HTTP server.
+Every npm test command prints SDK HEAD, working-tree dirty state and the configured server SHA before tests, including failures.
+Missing or malformed pins print `server_sha=unavailable` before the diagnostic.
+The combined `test:all` command stops with a nonzero exit if the unit, E2E contract or server-requirement suite fails.
+The harness removes the extracted tree on process exit.
+Missing, malformed or unavailable pins fail rather than falling back to checkout HEAD.
+See [test setup](test/README.md) for the pin and dependency boundary.
 It executes real `createGenerateAPIKeyHandler`, `validateJWT`, `createPayment`, `getPayment`, `cancelPayment`, `createCompleteSkyzaiPaymentHandler`, token resolution, transfer evaluation, and payment-summary logic.
 It uses the server's `FakeDb`, local fixture signing material, a fake business-owner identity verifier, Firebase wrapper shims, and fake mirror responses with verified transaction IDs.
 The merchant fixture is a KYB-approved business with an explicit owner, matching the hardened key-generation and per-request business checks.
