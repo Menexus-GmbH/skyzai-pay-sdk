@@ -79,8 +79,10 @@ No server files, dependencies, package version, or npm artifacts were changed by
 
 Run the complete release gate from the reviewed SDK checkout with Node.js 22.12+ (verified locally on Node.js 22.23.3).
 The SDK itself supports Node.js 18+; the dashboard's Vite dependencies require the newer release-gate runtime.
-Point `SKYZAI_APP_ROOT` at the server checkout containing the reviewed expiry and JWT-secret-binding fixes.
-That checkout needs its functions dependencies installed.
+The committed `test/server-pin.json` selects the reviewed Functions baseline used by both handler suites.
+Point `SKYZAI_APP_ROOT` at a local Git repository containing that commit with its Functions dependencies already installed.
+The harness reads those dependencies only and loads source from a disposable Git archive, independently of checkout HEAD or uncommitted files.
+Both handler suites print SDK/server SHAs; historical results above retain their original source boundaries.
 
 ```sh
 export SKYZAI_APP_ROOT=/path/to/reviewed/skyzai_app

@@ -1,15 +1,19 @@
-// Runs current Skyzai handlers with fixture project admission, owner keys and local transfer evidence only.
+// Runs pinned Skyzai handlers for both SDK handler suites over loopback HTTP with fake storage/chain evidence.
+// Source comes from server-source's disposable Git archive; dependencies are read from the local donor checkout.
 import { readFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { runInThisContext } from 'node:vm';
 import { createServer } from 'node:http';
+import { prepareServerSource } from './server-source.js';
+
+let serverSource;
 
 // Load the actual TypeScript handlers without initializing any cloud SDK.
 export async function startSkyzaiServer({ projectId = 'demo-skyzai' } = {}) {
-  if (!process.env.SKYZAI_APP_ROOT) throw new Error('Set SKYZAI_APP_ROOT to a local skyzai_app checkout');
-  const root = resolve(process.env.SKYZAI_APP_ROOT, 'functions');
-  const requireServer = createRequire(resolve(root, 'package.json'));
+  serverSource ??= prepareServerSource();
+  const { root, dependenciesRoot } = serverSource;
+  const requireServer = createRequire(resolve(dependenciesRoot, 'package.json'));
   const ts = requireServer('typescript');
   const jwt = requireServer('jsonwebtoken');
   const cache = new Map();
@@ -105,7 +109,7 @@ export async function startSkyzaiServer({ projectId = 'demo-skyzai' } = {}) {
   });
   await new Promise(resolveListen => server.listen(0, '127.0.0.1', resolveListen));
   return {
-    baseURL: `http://127.0.0.1:${server.address().port}`, db, calls, logs, apiKey, keyId,
+    baseURL: `http://127.0.0.1:${server.address().port}`, db, calls, logs, apiKey, keyId, source: serverSource,
     endpointOptions: Object.fromEntries(Object.entries(routes).map(([path, handler]) => [path, handler.options])),
     complete,
     setNow: value => { clockOverride = value; },

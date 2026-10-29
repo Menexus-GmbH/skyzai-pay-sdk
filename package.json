@@ -5,7 +5,7 @@
   "main": "src/index.js",
   "type": "module",
   "scripts": {
-    "test": "node --test test/sdk.test.js",
+    "test": "node --test test/sdk.test.js test/server-source.test.js",
     "test:e2e": "node --test test/payment.e2e.test.js",
     "test:server-requirements": "node --test test/server-requirements.test.js"
   },
