@@ -5,9 +5,10 @@
   "main": "src/index.js",
   "type": "module",
   "scripts": {
-    "test": "node --test test/sdk.test.js test/server-source.test.js",
-    "test:e2e": "node --test test/payment.e2e.test.js",
-    "test:server-requirements": "node --test test/server-requirements.test.js"
+    "test": "node --import ./test/helpers/run-identity.js --test test/sdk.test.js test/server-source.test.js test/run-identity.test.js",
+    "test:e2e": "node --import ./test/helpers/run-identity.js --test test/payment.e2e.test.js",
+    "test:server-requirements": "node --import ./test/helpers/run-identity.js --test test/server-requirements.test.js",
+    "test:all": "npm test && npm run test:e2e && npm run test:server-requirements"
   },
   "keywords": [
     "skyzai",

@@ -272,17 +272,18 @@ Node.js 16 is no longer supported.
 
 ```sh
 npm ci
-npm test
 export SKYZAI_APP_ROOT=/path/to/skyzai_app
-npm run test:e2e
-npm run test:server-requirements
+npm run test:all
 ```
 
 The [committed server pin](test/server-pin.json) selects the exact Functions revision, currently the reviewed precision-v3 commit.
 `SKYZAI_APP_ROOT` supplies a local Git repository containing that commit and installed `functions/node_modules`, including TypeScript and jsonwebtoken.
 The checkout's HEAD and uncommitted source files are not used.
 The harness extracts the pinned Functions tree with `git archive` into a unique ignored `test/.cache/` directory, transpiles that source in memory, and runs the SDK through a loopback HTTP server.
-It prints the SDK and server SHAs once per handler suite and removes the extracted tree on process exit.
+Every npm test command prints SDK HEAD, working-tree dirty state and the configured server SHA before tests, including failures.
+Missing or malformed pins print `server_sha=unavailable` before the diagnostic.
+The combined `test:all` command stops with a nonzero exit if the unit, E2E contract or server-requirement suite fails.
+The harness removes the extracted tree on process exit.
 Missing, malformed or unavailable pins fail rather than falling back to checkout HEAD.
 See [test setup](test/README.md) for the pin and dependency boundary.
 It executes real `createGenerateAPIKeyHandler`, `validateJWT`, `createPayment`, `getPayment`, `cancelPayment`, `createCompleteSkyzaiPaymentHandler`, token resolution, transfer evaluation, and payment-summary logic.

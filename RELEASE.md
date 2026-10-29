@@ -82,14 +82,14 @@ The SDK itself supports Node.js 18+; the dashboard's Vite dependencies require t
 The committed `test/server-pin.json` selects the reviewed Functions baseline used by both handler suites.
 Point `SKYZAI_APP_ROOT` at a local Git repository containing that commit with its Functions dependencies already installed.
 The harness reads those dependencies only and loads source from a disposable Git archive, independently of checkout HEAD or uncommitted files.
-Both handler suites print SDK/server SHAs; historical results above retain their original source boundaries.
+Every npm test command prints SDK HEAD, working-tree dirty state and server SHA before tests, including failures.
+`test:all` runs all three SDK suites and stops with a nonzero exit if any suite fails.
+Historical results above retain their original source boundaries.
 
 ```sh
 export SKYZAI_APP_ROOT=/path/to/reviewed/skyzai_app
 npm ci
-npm test
-npm run test:e2e
-npm run test:server-requirements
+npm run test:all
 npm ci --prefix examples/skyzai-pay-dash
 npm run lint --prefix examples/skyzai-pay-dash
 npm run build --prefix examples/skyzai-pay-dash

@@ -1,7 +1,8 @@
 # Local SDK test fixtures
 
 These Node test suites exercise SDK behavior and the merchant HTTP contract without cloud credentials, provider requests or chain transfers.
-`npm test` runs SDK units and source-pin admission tests.
+`npm run test:all` runs all three suites in order and exits nonzero as soon as a suite fails.
+`npm test` runs SDK units, source-pin admission tests and the run-identity regression.
 `npm run test:e2e` runs SDK requests over loopback HTTP against actual server handlers.
 `npm run test:server-requirements` checks the source boundary and the server expiry/JWT requirements.
 The handler adapter still uses the server's FakeDb and fake Mirror evidence; it does not qualify real Firestore transactions or native buyer transport.
@@ -15,8 +16,10 @@ This baseline is not a claim about the latest server revision or deployed behavi
 
 Set `SKYZAI_APP_ROOT` to an existing local `skyzai_app` Git repository containing that exact commit.
 The helper verifies the commit exists, archives its `functions/` tree into a unique directory under ignored `test/.cache/`, and removes that directory when the process exits.
-Each handler suite prints the SDK HEAD and pinned server SHA before loading handlers.
-SDK edits made after HEAD are still part of the tested working tree.
+Every npm test command preloads `helpers/run-identity.js` to print SDK HEAD, `sdk_dirty` and the configured server SHA before any tests, including failures.
+Missing or malformed pins print `server_sha=unavailable` before the pin diagnostic; an unavailable Git object prints the requested SHA before failing admission.
+`sdk_dirty=true` means the tested working tree includes tracked edits or untracked files beyond HEAD.
+Direct Node invocations need `--import ./test/helpers/run-identity.js` for the same receipt.
 There is no fetch, checkout, worktree, installation or modification of the server repository.
 Missing config, a non-full SHA or an unavailable commit fails before handler startup.
 
@@ -32,7 +35,8 @@ Use Node 22 through fnm for this test foundation:
 eval "$(fnm env --shell zsh)"
 fnm use 22.23.3
 export SKYZAI_APP_ROOT=/Users/darkness/Work/Aureus/skyzai_app
-npm test
-npm run test:e2e
-npm run test:server-requirements
+npm run test:all
 ```
+
+The combined command uses the three existing npm scripts and their exit codes, with no CI workflow or network setup.
+The [P1 change report](../docs/changes/TEST-BATCH0-PAY-1029.md) records the missing/wrong pin and deliberate E2E/server-gate failure proofs.
