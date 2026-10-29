@@ -53,3 +53,12 @@ npm run test:all
 
 The combined command uses the three existing npm scripts and their exit codes, with no CI workflow or network setup.
 The [P1 change report](../docs/changes/TEST-BATCH0-PAY-1029.md) records the missing/wrong pin and deliberate E2E/server-gate failure proofs.
+
+Run `npm run test:prove-failures` with the same Node and donor setup to reproduce those proofs from repository sources.
+It runs the actual combined command in disposable SDK copies under ignored `test/.cache/`, first with a missing pin, wrong pin, broken E2E assertion and broken JWT-secret gate, then with restored source.
+Each case checks its exit code, executed suites, source identities and archive cleanup; the final control must pass all three suites.
+The command verifies that the working checkout's pin and assertions remain byte-for-byte unchanged.
+It removes each disposable SDK, bounds and reaps subprocesses, and retains diagnostic logs plus `receipts.json` in the printed `test/.cache/runner-proofs-<random>/` directory.
+The copies inherit the enclosing SDK checkout's Git identity, so receipts describe that HEAD and dirty state.
+This separate proof command is excluded from `test:all` to avoid recursively rerunning itself.
+No historical ignored script or log is needed to reproduce the proofs.
