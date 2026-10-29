@@ -1,8 +1,9 @@
-// Checks the pinned handler source boundary and merchant release requirements using the local SDK/HTTP adapter.
+// Checks pinned source/dependency admission and merchant release requirements using the local SDK/HTTP adapter.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import SkyzaiPay from '../src/index.js';
 import { startSkyzaiServer, transfer } from './helpers/skyzai-server.js';
@@ -14,6 +15,62 @@ test('handler source matches the committed pin and is isolated from donor workin
   assert.notEqual(root, resolve(process.env.SKYZAI_APP_ROOT, 'functions'));
   const expected = execFileSync('git', ['-C', process.env.SKYZAI_APP_ROOT, 'show', `${sha}:functions/src/payment/createPayment.ts`], { encoding: 'utf8' });
   assert.equal(readFileSync(join(root, 'src/payment/createPayment.ts'), 'utf8'), expected);
+  const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
+  assert.deepEqual(server.source.dependencyVersions, Object.fromEntries(['typescript', 'jsonwebtoken'].map(name => [name, lock.packages[`node_modules/${name}`].version])));
+});
+
+test('handler startup admits locked dependencies and refuses drift or absent installs', async t => {
+  const donor = resolve(process.env.SKYZAI_APP_ROOT);
+  const requireDonor = createRequire(join(donor, 'functions/package.json'));
+  const dependencyReceipt = ['typescript', 'jsonwebtoken'].map(name => `${name}=${JSON.parse(readFileSync(requireDonor.resolve(`${name}/package.json`), 'utf8')).version}`).join(' ');
+  const cache = new URL('./.cache/', import.meta.url);
+  mkdirSync(cache, { recursive: true });
+  const directory = mkdtempSync(new URL('./dependency-admission-', cache));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const gitDirectory = execFileSync('git', ['-C', donor, 'rev-parse', '--absolute-git-dir'], { encoding: 'utf8' }).trim();
+  const helper = new URL('./helpers/skyzai-server.js', import.meta.url).href;
+  for (const changed of ['matching', 'typescript', 'jsonwebtoken', 'missing']) {
+    await t.test(changed, () => {
+      const repository = join(directory, changed);
+      mkdirSync(repository);
+      // Borrow Git objects read-only; package manifests below belong only to this disposable donor.
+      symlinkSync(gitDirectory, join(repository, '.git'), 'dir');
+      if (changed !== 'missing') {
+        for (const name of ['typescript', 'jsonwebtoken']) {
+          const packageRoot = join(repository, 'functions/node_modules', name);
+          mkdirSync(packageRoot, { recursive: true });
+          const metadata = JSON.parse(readFileSync(requireDonor.resolve(`${name}/package.json`), 'utf8'));
+          metadata.main = requireDonor.resolve(name);
+          if (name === changed) metadata.version = '0.0.0';
+          writeFileSync(join(packageRoot, 'package.json'), JSON.stringify(metadata));
+        }
+      }
+      const result = spawnSync(process.execPath, ['--input-type=module', '--eval', `
+        import { startSkyzaiServer } from ${JSON.stringify(helper)};
+        try {
+          const server = await startSkyzaiServer();
+          await server.close();
+          console.log('HANDLER_STARTED');
+        } catch (error) {
+          console.error(error.message);
+          process.exitCode = 1;
+        }
+      `], { env: { ...process.env, SKYZAI_APP_ROOT: repository }, encoding: 'utf8', timeout: 10_000 });
+      assert.equal(result.error, undefined);
+      if (changed === 'matching') {
+        assert.equal(result.status, 0, result.stderr);
+        assert.match(result.stdout, /\[skyzai test source\]/);
+        assert.ok(result.stdout.includes(dependencyReceipt), result.stdout);
+        assert.match(result.stdout, /HANDLER_STARTED/);
+        return;
+      }
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+      assert.match(result.stderr, changed === 'missing'
+        ? /Cannot resolve Functions dependency typescript.*install Functions dependencies/
+        : new RegExp(`Functions dependency mismatch for ${changed}.*found 0\\.0\\.0`));
+      assert.doesNotMatch(result.stdout, /HANDLER_STARTED/);
+    });
+  }
 });
 
 // Release gates owned by the separate Skyzai server change, never hidden with skips.

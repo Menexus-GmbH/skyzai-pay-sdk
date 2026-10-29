@@ -278,6 +278,8 @@ npm run test:all
 
 The [committed server pin](test/server-pin.json) selects the exact Functions revision, currently the reviewed precision-v3 commit.
 `SKYZAI_APP_ROOT` supplies a local Git repository containing that commit and installed `functions/node_modules`, including TypeScript and jsonwebtoken.
+Before handler startup, both installed package versions must match the pinned Functions lockfile; the source receipt records the verified versions.
+Missing or mismatched dependencies fail with instructions to install Functions dependencies matching that lockfile.
 The checkout's HEAD and uncommitted source files are not used.
 The harness extracts the pinned Functions tree with `git archive` into a unique ignored `test/.cache/` directory, transpiles that source in memory, and runs the SDK through a loopback HTTP server.
 Every npm test command prints SDK HEAD, working-tree dirty state and the configured server SHA before tests, including failures.

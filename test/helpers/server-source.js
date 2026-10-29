@@ -1,7 +1,8 @@
 // Pins the actual-handler adapter to a Git archive, never the donor checkout's working files.
-// Reads local Git/Functions dependencies only; creates disposable archives under test/.cache and removes them at exit.
+// Validates borrowed dependency versions against that archive; creates disposable test/.cache trees removed at exit.
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,6 +20,29 @@ export function readServerPin(pinFile = defaultPinFile) {
     throw new Error(`Server pin at ${pinFile} must contain a 40-character lowercase commit SHA in "sha".`);
   }
   return pin.sha;
+}
+
+export function verifyServerDependencies(root, dependenciesRoot) {
+  const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
+  const requireServer = createRequire(join(dependenciesRoot, 'package.json'));
+  const versions = {};
+  for (const name of ['typescript', 'jsonwebtoken']) {
+    const expected = lock.packages?.[`node_modules/${name}`]?.version;
+    if (typeof expected !== 'string' || !expected) {
+      throw new Error(`Pinned Functions lockfile has no version for ${name}.`);
+    }
+    let installed;
+    try {
+      installed = JSON.parse(readFileSync(requireServer.resolve(`${name}/package.json`), 'utf8')).version;
+    } catch (error) {
+      throw new Error(`Cannot resolve Functions dependency ${name} from ${dependenciesRoot}; install Functions dependencies matching the pinned lockfile.`, { cause: error });
+    }
+    if (installed !== expected) {
+      throw new Error(`Functions dependency mismatch for ${name}: expected ${expected} from the pinned lockfile, found ${installed} in ${dependenciesRoot}; install Functions dependencies matching the pinned lockfile.`);
+    }
+    versions[name] = installed;
+  }
+  return versions;
 }
 
 export function prepareServerSource({ repository = process.env.SKYZAI_APP_ROOT, pinFile = defaultPinFile, cacheRoot = join(sdkRoot, 'test/.cache') } = {}) {
@@ -39,12 +63,15 @@ export function prepareServerSource({ repository = process.env.SKYZAI_APP_ROOT, 
     git(['archive', '--format=tar', '--output', archive, sha, 'functions']);
     execFileSync('tar', ['-xf', archive, '-C', directory], { stdio: ['ignore', 'pipe', 'pipe'] });
     rmSync(archive);
+    const root = join(directory, 'functions');
+    const dependenciesRoot = join(repository, 'functions');
+    const dependencyVersions = verifyServerDependencies(root, dependenciesRoot);
     const sdkSha = execFileSync('git', ['-C', sdkRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-    console.info(`[skyzai test source] sdk_sha=${sdkSha} server_sha=${sha} source=git-archive`);
+    console.info(`[skyzai test source] sdk_sha=${sdkSha} server_sha=${sha} typescript=${dependencyVersions.typescript} jsonwebtoken=${dependencyVersions.jsonwebtoken} source=git-archive`);
     process.once('exit', cleanup);
-    return { root: join(directory, 'functions'), dependenciesRoot: join(repository, 'functions'), sha, sdkSha };
+    return { root, dependenciesRoot, dependencyVersions, sha, sdkSha };
   } catch (error) {
     cleanup();
-    throw new Error(`Could not archive Functions for server pin ${sha}.`, { cause: error });
+    throw new Error(`Could not prepare Functions for server pin ${sha}: ${error.message}`, { cause: error });
   }
 }

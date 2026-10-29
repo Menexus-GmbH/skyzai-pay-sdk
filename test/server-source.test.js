@@ -1,11 +1,11 @@
-// Checks the handler fixture's source-pin admission without server dependencies or network access.
+// Checks source-pin and locked dependency admission with disposable files, without server installs or network access.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readServerPin, prepareServerSource } from './helpers/server-source.js';
+import { readServerPin, prepareServerSource, verifyServerDependencies } from './helpers/server-source.js';
 
 function fixture(t, content) {
   const directory = mkdtempSync(join(tmpdir(), 'skyzai-pin-'));
@@ -40,4 +40,56 @@ test('a pin absent from the local Git object store fails before loading handlers
   const options = fixture(t, JSON.stringify({ sha: '0'.repeat(40) }));
   const repository = fileURLToPath(new URL('..', import.meta.url));
   assert.throws(() => prepareServerSource({ ...options, repository }), /Server pin 0{40} is not available/);
+});
+
+const versions = { typescript: '5.9.3', jsonwebtoken: '9.0.3' };
+
+function dependencyFixture(t) {
+  const { pinFile } = fixture(t);
+  const root = join(dirname(pinFile), 'archived-functions');
+  const dependenciesRoot = join(dirname(pinFile), 'donor-functions');
+  mkdirSync(root);
+  const packages = Object.fromEntries(Object.entries(versions).map(([name, version]) => [`node_modules/${name}`, { version }]));
+  writeFileSync(join(root, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3, packages }));
+  for (const [name, version] of Object.entries(versions)) {
+    const directory = join(dependenciesRoot, 'node_modules', name);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, 'package.json'), JSON.stringify({ name, version }));
+  }
+  return { root, dependenciesRoot };
+}
+
+test('matching donor dependencies report the archived lockfile versions', t => {
+  const { root, dependenciesRoot } = dependencyFixture(t);
+  assert.deepEqual(verifyServerDependencies(root, dependenciesRoot), versions);
+});
+
+test('each donor dependency must match the archived lockfile, not donor metadata', async t => {
+  for (const name of Object.keys(versions)) {
+    await t.test(name, t => {
+      const { root, dependenciesRoot } = dependencyFixture(t);
+      writeFileSync(join(dependenciesRoot, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '0.0.0' }));
+      writeFileSync(join(dependenciesRoot, 'package-lock.json'), JSON.stringify({ packages: { [`node_modules/${name}`]: { version: '0.0.0' } } }));
+      assert.throws(() => verifyServerDependencies(root, dependenciesRoot), error => {
+        assert.match(error.message, new RegExp(`Functions dependency mismatch for ${name}`));
+        assert.ok(error.message.includes(`expected ${versions[name]}`));
+        assert.match(error.message, /found 0\.0\.0.*install Functions dependencies/);
+        return true;
+      });
+    });
+  }
+});
+
+test('missing donor dependencies give an install diagnostic', t => {
+  const { root, dependenciesRoot } = dependencyFixture(t);
+  rmSync(join(dependenciesRoot, 'node_modules'), { recursive: true });
+  assert.throws(() => verifyServerDependencies(root, dependenciesRoot), /Cannot resolve Functions dependency typescript.*install Functions dependencies/);
+});
+
+test('the archived lockfile must contain an exact version for every borrowed dependency', t => {
+  const { root, dependenciesRoot } = dependencyFixture(t);
+  for (const version of [undefined, null, '', 123]) {
+    writeFileSync(join(root, 'package-lock.json'), JSON.stringify({ packages: { 'node_modules/typescript': { version } } }));
+    assert.throws(() => verifyServerDependencies(root, dependenciesRoot), /Pinned Functions lockfile has no version for typescript/);
+  }
 });

@@ -26,7 +26,10 @@ Missing config, a non-full SHA or an unavailable commit fails before handler sta
 Only TypeScript, jsonwebtoken and their runtime dependencies come from the donor repository's existing `functions/node_modules`.
 They are read-only inputs, not installed automatically by these tests.
 The verified local donor provides TypeScript 5.9.3 and jsonwebtoken 9.0.3, matching those entries in the pinned Functions lockfile.
-The helper does not enforce a complete dependency-lock match.
+Before loading either module, the helper checks its resolved installed package version against the archived `functions/package-lock.json`.
+Missing packages or version mismatches fail with an `install Functions dependencies matching the pinned lockfile` diagnostic.
+The `[skyzai test source]` receipt includes the verified `typescript` and `jsonwebtoken` versions beside the SDK and server SHAs.
+This checks those two direct dependencies, not the complete transitive dependency tree or package integrity.
 Unexpected handler imports and outbound server fetches remain forbidden by `helpers/skyzai-server.js`.
 
 Use Node 22 through fnm for this test foundation:
