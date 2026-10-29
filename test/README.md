@@ -5,6 +5,9 @@ These Node test suites exercise SDK behavior and the merchant HTTP contract with
 `npm test` runs SDK units, source-pin admission tests and the run-identity regression.
 `npm run test:e2e` runs SDK requests over loopback HTTP against actual server handlers.
 `npm run test:server-requirements` checks the source boundary and the server expiry/JWT requirements.
+The package requires Node 18.18.0 or newer for the identity preloader's `--import` option; this foundation is validated on Node 22 through fnm.
+Git must be installed and available on PATH for every suite, including units.
+If Git is missing, startup prints the configured server SHA with `sdk_sha=unavailable sdk_dirty=unavailable`, then fails with instructions to install Git and put it on PATH.
 The handler adapter still uses the server's FakeDb and fake Mirror evidence; it does not qualify real Firestore transactions or native buyer transport.
 
 ## Pinned Functions source

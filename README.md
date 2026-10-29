@@ -8,7 +8,7 @@ It targets the Skyzai backend exclusively.
 npm install skyzai-pay
 ```
 
-Requires Node.js 18+ or a browser with Fetch and AbortController.
+Requires Node.js 18.18+ or a browser with Fetch and AbortController.
 This package uses ES modules.
 
 ## Merchant setup

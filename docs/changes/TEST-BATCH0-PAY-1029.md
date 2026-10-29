@@ -1,7 +1,7 @@
 # Change report: TEST-BATCH0-PAY-1029
 
-Repo `/Users/darkness/Work/Aureus/aureus-pay-sdk`, branch `test/batch0-pin-1029`, range `910f704..working tree`.
-0 commits, 0 merges, 5 files, +120 / -27 lines.
+Repo `/Users/darkness/Work/Aureus/aureus-pay-sdk`, branch `test/batch0-pin-1029`, range `30bfd6f..working tree`.
+0 commits, 0 merges, 8 files, +122 / -39 lines.
 
 Part 1 is written by the authoring agent. Part 2 is generated from git by `agentmail/bin/change-report` and is the ground truth: if they disagree, Part 2 wins and the disagreement is a review finding.
 
@@ -9,21 +9,22 @@ Part 1 is written by the authoring agent. Part 2 is generated from git by `agent
 
 ## What and why
 
-Fix-round iteration 3 completes review finding #8: pinned server commits must contain a `functions/src` directory, with a clear diagnostic before archive allocation or dependency loading.
-A missing `functions` tree, missing `src` tree or file at `functions/src` now fails source admission with the pinned SHA and required source layout.
-Earlier fix-round iterations completed #1/#2 (locked direct dependency versions, receipts and missing-install diagnostics) and #5 (direct commit-object pins and Git replacement isolation).
+Fix-round iteration 4 completes review finding #9: package and lockfile engines now require Node 18.18.0 or newer, and all three suites diagnose missing Git clearly.
+The shared preloader prints the configured server SHA with unavailable SDK identity fields when Git cannot be executed, then fails with installation/PATH instructions before any tests execute.
+Earlier fix-round iterations completed #1/#2 (locked direct dependency versions, receipts and missing-install diagnostics), #5 (direct commit-object pins and Git replacement isolation) and #8 (Functions source-layout admission).
 The server remains pinned to `06ced3371528a871849156a70a114e457215b1be` (PAYSDK-PRECISION-V3-1027, reviewed PASS r4).
-This report's generated facts cover only this iteration's uncommitted changes on SDK HEAD `910f7046eeb8bc252fd00a1a4e388b8a9d39fd02`.
+This report's generated facts cover only this iteration's uncommitted changes on SDK HEAD `30bfd6fe3d108f7d090e4abe88c382487a3dea7c`.
 The earlier P1 foundation is already in orchestrator commits `e47b9f2` and `cec6782`; its failing-first receipts are retained below as historical evidence.
-Orchestrator commits `5b08e84` and `910f704` contain fix-round iterations 1 and 2 respectively.
+Orchestrator commits `5b08e84`, `910f704` and `30bfd6f` contain fix-round iterations 1, 2 and 3 respectively.
 No SDK or server branch commit was made.
-The fix-round stop condition is not met: FIX #7, #9 and #10 remain open.
+The fix-round stop condition is not met: FIX #7 and #10 remain open.
 P4 remains outside this iteration.
 
 ## Flow (step by step)
 
 1. `npm run test:all` runs the unit, E2E and server-requirement suites sequentially, stopping at any nonzero exit.
 2. Each suite's preloader prints SDK HEAD, working-tree dirty state and the configured server SHA before test execution.
+If Git is absent from PATH, it instead prints `sdk_sha=unavailable sdk_dirty=unavailable` with the configured server SHA, then throws `Git is required to run Skyzai SDK tests; install Git and ensure git is on PATH.`
 3. Handler startup checks `git cat-file -t <pin>` with `GIT_NO_REPLACE_OBJECTS=1` and rejects every object type except `commit`.
 It then checks `git cat-file -t <pin>:functions/src` is `tree`, using the same replacement-disabled Git environment.
 Missing directories or another object type stop startup with `Pinned server commit <sha> must contain the functions/src directory; choose a server pin with the Functions source layout.`
@@ -36,6 +37,19 @@ Test teardown closes servers; process exit removes successful archives.
 
 ## How it is implemented
 
+`test/helpers/run-identity.js`, shared by every suite, catches the SDK Git-state failure and delays throwing until after the run receipt is printed.
+Only an `ENOENT` execution error receives the missing-Git diagnostic; other Git failures retain their original errors.
+Unavailable fields are explicit rather than fabricated source identities.
+`package.json` and the root package entry in `package-lock.json` now declare `>=18.18.0`, matching the preloader requirement; README and release documentation state that package floor.
+Node's [official CLI history](https://nodejs.org/api/cli.html#--importmodule) lists `--import` as added in Node 18.18.0 and 19.0.0.
+The package floor change stops advertising support for Node 18.0-18.17; this iteration executes on Node 22 only and does not claim a Node 18 runtime qualification.
+`test/run-identity.test.js` checks both manifests and launches each suite's actual Node command with an empty temporary PATH, using the absolute Node executable so only Git is absent.
+Each subprocess must exit 1, print the partial identity and actionable error, and avoid loading handler source.
+The fixture deletes inherited `NODE_TEST_CONTEXT`: otherwise Node treats the nested runner as recursive and skips its files, producing a false exit 0 before the defect is exercised.
+The original success/failure identity test remains the passing Git-present control.
+No test dependencies, extra runner or network access are introduced.
+
+The following source-layout behavior was implemented in fix-round iteration 3 and remains covered.
 `prepareServerSource` in `test/helpers/server-source.js` validates the source tree before creating a cache directory or resolving dependency metadata.
 Checking the Git object type guarantees that `functions/src` is an actual directory in the pinned commit rather than a file or mutable donor path.
 It reuses the existing Git wrapper; no new configuration, dependency or SDK API is needed.
@@ -66,27 +80,30 @@ The existing failure wrapper now includes the underlying preparation error, pres
 Those subprocesses borrow the donor's Git object directory read-only and use disposable package manifests pointing at the real installed runtime modules.
 Changing either disposable manifest to version `0.0.0` reproduces drift without modifying or reinstalling anything in the donor.
 A matching control starts and closes the actual server and checks the version receipt; the absent-install control has no Functions dependencies.
-No SDK API, runtime behavior, package dependency or CI workflow changes.
+No SDK API, runtime implementation, package dependency or CI workflow changes; only the declared Node minimum changes for consumers.
 Only the two borrowed direct package versions are checked; transitive versions and package-byte integrity remain outside this check.
 
 ## How it was verified
 
 Commands used Node 22.23.3 via `fnm exec --using 22.23.3`.
-The tested SDK identity is HEAD `910f7046eeb8bc252fd00a1a4e388b8a9d39fd02` plus this working diff (`sdk_dirty=true`).
+The tested SDK identity is HEAD `30bfd6fe3d108f7d090e4abe88c382487a3dea7c` plus this working diff (`sdk_dirty=true`).
 The pinned server identity is `06ced3371528a871849156a70a114e457215b1be`, with TypeScript 5.9.3 and jsonwebtoken 9.0.3.
 The donor `/Users/darkness/Work/Aureus/skyzai_app` stayed at `122f16418e862eac2f460e0fd15bdd7658f29f23`, with only its pre-existing untracked `.iac-security-fix-0919/`.
 
 ```sh
-fnm exec --using 22.23.3 node --test test/server-source.test.js
-SKYZAI_APP_ROOT=/Users/darkness/Work/Aureus/skyzai_app fnm exec --using 22.23.3 node --import ./test/helpers/run-identity.js --test --test-name-pattern='actual handler startup clearly rejects' test/server-requirements.test.js
-SKYZAI_APP_ROOT=/Users/darkness/Work/Aureus/skyzai_app fnm exec --using 22.23.3 node --import ./test/helpers/run-identity.js --test test/server-requirements.test.js
+fnm exec --using 22.23.3 node --test test/run-identity.test.js
 SKYZAI_APP_ROOT=/Users/darkness/Work/Aureus/skyzai_app fnm exec --using 22.23.3 npm run test:all
+fnm exec --using 22.23.3 node --check test/helpers/run-identity.js
+fnm exec --using 22.23.3 node --check test/run-identity.test.js
+git diff --check
 ```
 
 ### Fix-round failing-first table
 
 | FIX requirement | First failing proof before implementation | Passing proof |
 | --- | --- | --- |
+| #9: Declared Node support must include the identity preloader | Focused command before implementation: metadata test fails with actual `>=18.0.0`, expected `>=18.18.0`. | Same test passes and checks both package and lockfile engine entries; docs agree with the new floor. No Node 18 binary was installed or executed. |
+| #9: Missing Git must fail every suite clearly with a partial identity | The same focused command reports 6 tests, 1 pass / 5 fail: metadata plus all three suite-startup subtests and their parent. Each startup output contains raw `spawnSync git ENOENT` without a run receipt or installation diagnostic. | Same focused command: 6/6 pass. Each actual suite Node command exits 1 with the clear Git diagnostic and configured server SHA; the full restored combined command passes 120/120. |
 | #8: Pinned source must have a Functions source directory | Unit run before implementation: 20 tests, 16 pass / 4 fail (three layout subtests and their parent). Missing Functions produced an archive pathspec error; missing `src` and a file at `src` incorrectly passed preparation. | Same unit command: 20/20 pass; all three malformed layouts receive the SHA-specific source-layout diagnostic before cache allocation. |
 | #8: Actual handler startup must diagnose missing layout clearly | Focused startup run before implementation: 3 tests, 0 pass / 3 fail. Missing Functions produced a Git error; missing `src` surfaced a dependency-lockfile error. | Same focused command: 3/3 pass; both real startup subprocesses exit 1 with the required diagnostic and leave no source cache. The restored three-suite run passes 115/115. |
 | #5: Pin must be a commit object directly | `node --test test/server-source.test.js`: plain/replaced annotated tags were accepted; tree/blob cases produced the wrong generic diagnostic. | The same four object-type cases pass and report the original tag/tree/blob type, including a tag replaced with a commit. |
@@ -95,7 +112,12 @@ SKYZAI_APP_ROOT=/Users/darkness/Work/Aureus/skyzai_app fnm exec --using 22.23.3 
 | #1: Verified dependency versions must be recorded | Actual source descriptor had no `dependencyVersions`; the matching startup control printed no version receipt. | Source descriptor equals archived lockfile versions; matching actual-handler startup exits 0 and prints TypeScript/jsonwebtoken versions in the source identity line. |
 | #2: Missing donor dependencies must fail clearly | Real startup subprocess exited 1 with raw `Cannot find module 'typescript'`; the diagnostic assertion failed. The unit absence assertion also failed before the verifier existed. | Same unit and startup assertions pass with `Cannot resolve Functions dependency typescript ... install Functions dependencies matching the pinned lockfile`. |
 
-Iteration 3's combined command exits 0 with **115 passing tests: 39 unit, 63 E2E and 13 server requirements**, zero failures, cancellations, skips or todos.
+Iteration 4's combined command exits 0 with **120 passing tests: 44 unit, 63 E2E and 13 server requirements**, zero failures, cancellations, skips or todos.
+The focused identity/tooling command passes 6/6 after failing first with 1 pass / 5 fail.
+Its raw local logs are ignored `test/.cache/fix-tooling-iteration4/{identity-before,identity-after,all-after}.log`; the fixture and rerun commands are tracked source and do not depend on those logs.
+No legacy Node version was executed; the engine floor is a metadata assertion supported by the CLI history above.
+
+Historically, iteration 3's combined command exited 0 with **115 passing tests: 39 unit, 63 E2E and 13 server requirements**, zero failures, cancellations, skips or todos.
 Its focused unit and startup commands passed 20/20 and 3/3 respectively after implementation.
 Raw local evidence is under ignored `test/.cache/fix-layout-iteration3/`: `unit-before.log`, `requirements-before.log`, `unit-after.log`, `requirements-after.log`, `all-after.log`.
 The new tests and commands are tracked source and can be rerun without those logs.
@@ -108,7 +130,7 @@ Those fixture tests and exact commands are in source; rerunning them does not re
 Historically, iteration 1's first server-requirement run reported 9 tests, 3 pass / 6 fail, and its combined passing run reported 101 tests: 29 unit, 63 E2E and 9 server requirements.
 Its first unit log records the absent dependency helper; the startup regressions separately reproduce the dependency defects through the real archive/loader boundary.
 Those older logs remain under `test/.cache/fix-dependencies-iteration1/`: `unit-before.log`, `requirements-before.log`, `all-after.log`.
-`git diff --check` and syntax checks of all three changed JavaScript files pass.
+`git diff --check` and syntax checks of both changed JavaScript files pass.
 The root package has no build, lint or formatter script.
 All validation commands exited; no source archive or disposable donor directory remained after validation.
 
@@ -121,7 +143,7 @@ All validation commands exited; no source archive or disposable donor directory 
 | FIX #5 replacement refs and non-commit objects | Implemented and verified above with object-type/byte-level units and real SDK/handler startup. |
 | FIX #7 signal cleanup and stale archive pruning | Open: add failing-first signal and restart tests. |
 | FIX #8 absent Functions tree | Implemented and verified above with directory/type admission units and real handler startup subprocesses. |
-| FIX #9 Node engine floor and absent Git | Open: align tooling metadata and add a clear missing-Git test. |
+| FIX #9 Node engine floor and absent Git | Implemented and verified above: consistent package/lockfile engines and all three suite-startup diagnostics with partial identities. |
 | FIX #10 cumulative report and reproducible original mutation proofs | Open: this iteration's facts are regenerated, but final cumulative facts and a tracked reproduction for the original ignored `prove_failures.py` are still required. |
 | ACCEPT+DOC #3 dirty tree | `sdk_dirty` is recorded; dirty trees remain allowed, with HEAD identifying the base rather than the exact uncommitted bytes. |
 | ACCEPT+DOC #4 persisted identity | Identity remains on stdout only; there is no `last-run.json` artifact. |
@@ -151,7 +173,8 @@ The original ignored `prove_failures.py` and logs are not claimed as tracked or 
 
 ## Deploy / release impact
 
-None: local test source/dependency admission and documentation only.
+No deployment: local test startup, package engine metadata and documentation only.
+Consumers on Node 18.0-18.17 now fall below the declared package engine floor.
 No install, server-checkout write, branch commit, push, merge, CI, publication, deployment, cloud command, provider call, chain transfer or real payment occurred.
 These tests still use FakeDb and fake chain verification; they do not qualify real Firestore isolation, native buyer/callable transport or funded rails.
 Normal independent review and the scoped read-only re-break remain prerequisites before merge; this author iteration does not claim independent clearance.
@@ -160,27 +183,40 @@ Normal independent review and the scoped read-only re-break remain prerequisites
 
 ## Sensitive areas touched
 
-- None.
+- **Dependencies** (1): `package.json`
+
+## Dependency changes
+
+`package.json`:
+```diff
+-    "node": ">=18.0.0"
++    "node": ">=18.18.0"
+```
 
 ## Commits
 
 
-## Test files (4)
+## Source files (2)
 
-### `test/README.md` (modified, +1/-0)
+### `package-lock.json` (modified, +1/-1)
 
-### `test/helpers/server-source.js` (modified, +8/-1)
-- Changed: `git()`
+### `package.json` (modified, +1/-1)
 
-### `test/server-requirements.test.js` (modified, +47/-1)
-- Added: `git()`
-- Changed: `test 'actual handler startup clearly rejects pins without the Functions source layout'`
-- Test cases added/edited (1): actual handler startup clearly rejects pins without the Functions source layout
+## Test files (3)
 
-### `test/server-source.test.js` (modified, +20/-1)
-- Changed: `test 'a pinned commit must contain a Functions source directory before archive allocation'`
-- Test cases added/edited (1): a pinned commit must contain a Functions source directory before archive allocation
+### `test/README.md` (modified, +3/-0)
 
-## Docs and context files (1)
+### `test/helpers/run-identity.js` (modified, +13/-3)
+- Changed: `dirty`, `sdkSha`, `serverSha`
 
-### `docs/changes/TEST-BATCH0-PAY-1029.md` (modified, +44/-24)
+### `test/run-identity.test.js` (modified, +35/-1)
+- Changed: `packageJson`, `test 'every suite clearly diagnoses missing Git before executing tests'`, `test 'package and lockfile require Node 18.18 or newer for identity preloading'`
+- Test cases added/edited (2): package and lockfile require Node 18.18 or newer for identity preloading; every suite clearly diagnoses missing Git before executing tests
+
+## Docs and context files (3)
+
+### `README.md` (modified, +1/-1)
+
+### `RELEASE.md` (modified, +1/-1)
+
+### `docs/changes/TEST-BATCH0-PAY-1029.md` (modified, +67/-31)
